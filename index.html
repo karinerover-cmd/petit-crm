@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Petit Sabó — CRM</title>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  :root{
+    --bg: #FAF7F2;
+    --panel: #FFFFFF;
+    --ink: #2E2A26;
+    --muted: #8A8178;
+    --line: #E8E1D7;
+    --rose: #C77B6F;
+    --rose-deep: #A85F53;
+    --sage: #8B9A7B;
+    --amber: #C99A4A;
+    --danger: #B5544A;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family: 'Georgia', 'Iowan Old Style', serif;
+  }
+  .ui { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  #root { min-height:100vh; }
+
+  .shell { max-width: 980px; margin: 0 auto; padding: 32px 20px 80px; }
+  .brandmark { font-size: 15px; letter-spacing: 0.04em; color: var(--rose-deep); margin-bottom: 4px; }
+  h1 { font-size: 28px; font-weight: 400; margin: 0 0 28px; }
+
+  .login-wrap { max-width: 360px; margin: 12vh auto; text-align:center; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin-bottom: 16px;
+  }
+  input, select, textarea {
+    font-family: inherit;
+    font-size: 15px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--ink);
+    width: 100%;
+  }
+  label { display:block; font-size:13px; color:var(--muted); margin: 10px 0 4px; text-align:left; }
+  button {
+    font-family: inherit;
+    font-size: 14px;
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: none;
+    background: var(--rose);
+    color: #fff;
+    cursor: pointer;
+  }
+  button:hover { background: var(--rose-deep); }
+  button.secondary { background: transparent; border: 1px solid var(--line); color: var(--ink); }
+  button.secondary:hover { background: #f2ede5; }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  .tabs { display:flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
+  .tab { padding: 10px 16px; cursor:pointer; color: var(--muted); font-size: 14px; border-bottom: 2px solid transparent; }
+  .tab.active { color: var(--rose-deep); border-bottom-color: var(--rose); }
+
+  table { width:100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align:left; color: var(--muted); font-weight:400; font-size:12px; text-transform:none; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  td { padding: 10px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+
+  .pill { display:inline-block; padding: 2px 9px; border-radius: 20px; font-size: 12px; }
+  .pill.pendente { background: #F5EBD8; color: var(--amber); }
+  .pill.atrasado { background: #F5E1DE; color: var(--danger); }
+  .pill.feito { background: #E7EDE2; color: var(--sage); }
+
+  .empty { color: var(--muted); font-size: 14px; padding: 30px 0; text-align:center; }
+  .row { display:flex; gap: 12px; }
+  .row > * { flex:1; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .err { color: var(--danger); font-size: 13px; margin-top: 8px; }
+  .toolbar { display:flex; justify-content: space-between; align-items:center; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+  // ---- Configuração Supabase (chave publicável — segura de expor no front) ----
+  const SUPABASE_URL = "https://cayvyoufdsfcrvwdscln.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_M9JVwfgdCD9K0nDeKN_d2g_ipq6KkBq";
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback } = React;
+
+function addDays(dateStr, days) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+function today() { return new Date().toISOString().slice(0, 10); }
+function fmt(d) {
+  if (!d) return "—";
+  const [y,m,dd] = d.split("-");
+  return `${dd}/${m}/${y}`;
+}
+
+// ============ LOGIN ============
+function Login({ onLogin }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    setLoading(true); setErr("");
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    setLoading(false);
+    if (error) { setErr("E-mail ou senha incorretos."); return; }
+    onLogin(data.session);
+  }
+
+  return (
+    <div className="ui login-wrap">
+      <div className="brandmark">PETIT SABÓ</div>
+      <h1 style={{fontSize:22}}>Entrar no CRM</h1>
+      <form className="card" onSubmit={submit}>
+        <label>E-mail</label>
+        <input type="email" value={email} onChange={e=>setEmail(e.target.value)} required />
+        <label>Senha</label>
+        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} required />
+        {err && <div className="err">{err}</div>}
+        <div style={{marginTop:16}}>
+          <button type="submit" disabled={loading} style={{width:"100%"}}>
+            {loading ? "Entrando..." : "Entrar"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ============ NOVO CLIENTE (inline form) ============
+function ClienteForm({ onSaved }) {
+  const [form, setForm] = useState({ nome:"", telefone:"", instagram_handle:"", email:"", data_nascimento:"" });
+  const [saving, setSaving] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    const payload = { ...form, data_nascimento: form.data_nascimento || null };
+    const { data, error } = await sb.from("clientes").insert(payload).select().single();
+    setSaving(false);
+    if (!error) { onSaved(data); setForm({ nome:"", telefone:"", instagram_handle:"", email:"", data_nascimento:"" }); }
+  }
+
+  return (
+    <form className="card" onSubmit={submit}>
+      <div className="row">
+        <div>
+          <label>Nome *</label>
+          <input value={form.nome} onChange={e=>setForm({...form, nome:e.target.value})} required />
+        </div>
+        <div>
+          <label>Telefone (WhatsApp)</label>
+          <input value={form.telefone} onChange={e=>setForm({...form, telefone:e.target.value})} />
+        </div>
+      </div>
+      <div className="row">
+        <div>
+          <label>Instagram</label>
+          <input value={form.instagram_handle} onChange={e=>setForm({...form, instagram_handle:e.target.value})} />
+        </div>
+        <div>
+          <label>Data de nascimento</label>
+          <input type="date" value={form.data_nascimento} onChange={e=>setForm({...form, data_nascimento:e.target.value})} />
+        </div>
+      </div>
+      <div style={{marginTop:12}}>
+        <button type="submit" disabled={saving}>{saving ? "Salvando..." : "Salvar cliente"}</button>
+      </div>
+    </form>
+  );
+}
+
+// ============ CLIENTES TAB ============
+function ClientesTab() {
+  const [clientes, setClientes] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+
+  const load = useCallback(async () => {
+    const { data } = await sb.from("clientes").select("*").order("criado_em", { ascending:false });
+    setClientes(data || []);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div>
+      <div className="toolbar">
+        <div className="muted">{clientes.length} cliente(s)</div>
+        <button className="secondary" onClick={()=>setShowForm(s=>!s)}>
+          {showForm ? "Cancelar" : "+ Novo cliente"}
+        </button>
+      </div>
+      {showForm && <ClienteForm onSaved={()=>{ setShowForm(false); load(); }} />}
+      <div className="card" style={{padding:0}}>
+        {clientes.length === 0 ? (
+          <div className="empty">Nenhum cliente cadastrado ainda.</div>
+        ) : (
+          <table>
+            <thead><tr><th>Nome</th><th>Contato</th><th>Tags</th><th>Desde</th></tr></thead>
+            <tbody>
+              {clientes.map(c => (
+                <tr key={c.id}>
+                  <td>{c.nome}</td>
+                  <td className="muted">{c.telefone || c.instagram_handle || c.email || "—"}</td>
+                  <td className="muted">{(c.tags||[]).join(", ") || "—"}</td>
+                  <td className="muted">{fmt(c.criado_em?.slice(0,10))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============ NOVA VENDA + GERAÇÃO DE FOLLOW-UPS ============
+
+// Chaves de regras vinculadas a venda (apos_venda / apos_recebimento)
+const REGRAS_POR_VENDA = [
+  "confirmacao_whatsapp","feedback_pos_compra",
+  "cashback_disponivel","cashback_10_dias","cashback_3_dias","cashback_expirado"
+];
+const OFFSETS = {
+  confirmacao_whatsapp: 0,
+  feedback_pos_compra: 8,
+  cashback_disponivel: 15,
+  cashback_10_dias: 45,
+  cashback_3_dias: 52,
+  cashback_expirado: 55,
+  reativacao_60: 60, reativacao_90: 90, reativacao_120: 120,
+  reativacao_150: 150, reativacao_180: 180,
+  reativacao_240: 240, reativacao_365: 365,
+};
+const REATIVACAO_CHAVES = ["reativacao_60","reativacao_90","reativacao_120","reativacao_150","reativacao_180","reativacao_240","reativacao_365"];
+
+function VendaForm({ onSaved }) {
+  const [clientes, setClientes] = useState([]);
+  const [canais, setCanais] = useState([]);
+  const [regras, setRegras] = useState([]);
+  const [form, setForm] = useState({ cliente_id:"", canal_id:"", valor:"", data_venda: today(), data_recebimento:"", cashback_valor:"", incluir_whatsapp:false });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const [{data:cli}, {data:can}, {data:reg}] = await Promise.all([
+        sb.from("clientes").select("id,nome").order("nome"),
+        sb.from("canais").select("id,nome"),
+        sb.from("follow_up_regras").select("*").eq("ativo", true),
+      ]);
+      setClientes(cli || []); setCanais(can || []); setRegras(reg || []);
+    })();
+  }, []);
+
+  const regraByChave = (chave) => regras.find(r => r.chave === chave);
+
+  async function gerarFollowUpsDaVenda(venda, clienteId) {
+    const inserts = [];
+    for (const chave of REGRAS_POR_VENDA) {
+      if (chave === "confirmacao_whatsapp" && !form.incluir_whatsapp) continue;
+      const regra = regraByChave(chave);
+      if (!regra) continue;
+      const base = chave === "feedback_pos_compra" ? (form.data_recebimento || venda.data_venda) : venda.data_venda;
+      inserts.push({
+        regra_id: regra.id, cliente_id: clienteId, venda_id: venda.id,
+        data_prevista: addDays(base, OFFSETS[chave]), status: "pendente",
+      });
+    }
+    if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
+  }
+
+  async function gerenciarCashback(venda, clienteId) {
+    if (!form.cashback_valor) return;
+    await sb.from("cashback").insert({
+      venda_id: venda.id, cliente_id: clienteId,
+      valor: parseFloat(form.cashback_valor),
+      data_liberacao: addDays(venda.data_venda, 15),
+      data_validade: addDays(venda.data_venda, 55),
+      status: "pendente",
+    });
+  }
+
+  async function resetarReativacao(clienteId, novaData) {
+    // Cancela reativações pendentes antigas
+    const regraIds = regras.filter(r => REATIVACAO_CHAVES.includes(r.chave)).map(r => r.id);
+    if (regraIds.length) {
+      await sb.from("follow_up_instancias")
+        .update({ status: "cancelado" })
+        .eq("cliente_id", clienteId)
+        .in("regra_id", regraIds)
+        .eq("status", "pendente");
+    }
+    // Gera novas a partir da nova compra
+    const inserts = REATIVACAO_CHAVES.map(chave => {
+      const regra = regraByChave(chave);
+      return regra ? { regra_id: regra.id, cliente_id: clienteId, venda_id: null,
+        data_prevista: addDays(novaData, OFFSETS[chave]), status: "pendente" } : null;
+    }).filter(Boolean);
+    if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
+  }
+
+  async function checarFidelidade(clienteId, vendaData) {
+    const { count } = await sb.from("vendas").select("id", { count: "exact", head:true }).eq("cliente_id", clienteId);
+    const marcos = { 3: "fidelidade_3_compras", 5: "fidelidade_5_compras" };
+    const chave = marcos[count];
+    if (!chave) return;
+    const regra = regraByChave(chave);
+    if (!regra) return;
+    const { data: existente } = await sb.from("follow_up_instancias").select("id").eq("cliente_id", clienteId).eq("regra_id", regra.id);
+    if (existente && existente.length) return; // já gerado antes
+    await sb.from("follow_up_instancias").insert({ regra_id: regra.id, cliente_id: clienteId, venda_id: null, data_prevista: vendaData, status: "pendente" });
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    setErr(""); setSaving(true);
+    try {
+      const { data: venda, error } = await sb.from("vendas").insert({
+        cliente_id: form.cliente_id, canal_id: form.canal_id,
+        valor: parseFloat(form.valor), data_venda: form.data_venda,
+        data_recebimento: form.data_recebimento || null,
+      }).select().single();
+      if (error) throw error;
+
+      await gerarFollowUpsDaVenda(venda, form.cliente_id);
+      await gerenciarCashback(venda, form.cliente_id);
+      await resetarReativacao(form.cliente_id, form.data_venda);
+      await checarFidelidade(form.cliente_id, form.data_venda);
+
+      onSaved();
+      setForm({ cliente_id:"", canal_id:"", valor:"", data_venda: today(), data_recebimento:"", cashback_valor:"", incluir_whatsapp:false });
+    } catch (e2) {
+      setErr("Erro ao salvar: " + e2.message);
+    }
+    setSaving(false);
+  }
+
+  return (
+    <form className="card" onSubmit={submit}>
+      <div className="row">
+        <div>
+          <label>Cliente *</label>
+          <select value={form.cliente_id} onChange={e=>setForm({...form, cliente_id:e.target.value})} required>
+            <option value="">Selecionar...</option>
+            {clientes.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+          </select>
+        </div>
+        <div>
+          <label>Canal *</label>
+          <select value={form.canal_id} onChange={e=>setForm({...form, canal_id:e.target.value})} required>
+            <option value="">Selecionar...</option>
+            {canais.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="row">
+        <div>
+          <label>Valor (R$) *</label>
+          <input type="number" step="0.01" value={form.valor} onChange={e=>setForm({...form, valor:e.target.value})} required />
+        </div>
+        <div>
+          <label>Data da venda</label>
+          <input type="date" value={form.data_venda} onChange={e=>setForm({...form, data_venda:e.target.value})} />
+        </div>
+      </div>
+      <div className="row">
+        <div>
+          <label>Data de recebimento (opcional)</label>
+          <input type="date" value={form.data_recebimento} onChange={e=>setForm({...form, data_recebimento:e.target.value})} />
+        </div>
+        <div>
+          <label>Cashback gerado (R$, opcional)</label>
+          <input type="number" step="0.01" value={form.cashback_valor} onChange={e=>setForm({...form, cashback_valor:e.target.value})} />
+        </div>
+      </div>
+      <label style={{display:"flex", alignItems:"center", gap:8, marginTop:12}}>
+        <input type="checkbox" style={{width:"auto"}} checked={form.incluir_whatsapp} onChange={e=>setForm({...form, incluir_whatsapp:e.target.checked})} />
+        <span className="muted">Incluir confirmação de compra via WhatsApp</span>
+      </label>
+      {err && <div className="err">{err}</div>}
+      <div style={{marginTop:16}}>
+        <button type="submit" disabled={saving}>{saving ? "Salvando..." : "Registrar venda"}</button>
+      </div>
+    </form>
+  );
+}
+
+function VendasTab() {
+  const [vendas, setVendas] = useState([]);
+  const [showForm, setShowForm] = useState(true);
+
+  const load = useCallback(async () => {
+    const { data } = await sb.from("vendas")
+      .select("*, clientes(nome), canais(nome)")
+      .order("data_venda", { ascending:false }).limit(30);
+    setVendas(data || []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div>
+      <div className="toolbar">
+        <div className="muted">Últimas vendas</div>
+        <button className="secondary" onClick={()=>setShowForm(s=>!s)}>
+          {showForm ? "Ocultar formulário" : "+ Nova venda"}
+        </button>
+      </div>
+      {showForm && <VendaForm onSaved={load} />}
+      <div className="card" style={{padding:0}}>
+        {vendas.length === 0 ? (
+          <div className="empty">Nenhuma venda registrada ainda.</div>
+        ) : (
+          <table>
+            <thead><tr><th>Cliente</th><th>Canal</th><th>Valor</th><th>Data</th></tr></thead>
+            <tbody>
+              {vendas.map(v => (
+                <tr key={v.id}>
+                  <td>{v.clientes?.nome || "—"}</td>
+                  <td className="muted">{v.canais?.nome || "—"}</td>
+                  <td>R$ {Number(v.valor).toFixed(2)}</td>
+                  <td className="muted">{fmt(v.data_venda)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============ FOLLOW-UPS TAB ============
+function FollowUpsTab() {
+  const [items, setItems] = useState([]);
+  const [filtro, setFiltro] = useState("pendente");
+
+  const load = useCallback(async () => {
+    const { data } = await sb.from("follow_up_instancias")
+      .select("*, clientes(nome, telefone), follow_up_regras(descricao, chave)")
+      .eq("status", "pendente")
+      .order("data_prevista", { ascending:true })
+      .limit(100);
+    setItems(data || []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function marcar(id, status) {
+    await sb.from("follow_up_instancias").update({ status, atualizado_em: new Date().toISOString() }).eq("id", id);
+    load();
+  }
+
+  const list = items; // já filtrado por pendente na query
+
+  return (
+    <div>
+      <div className="toolbar">
+        <div className="muted">{list.length} follow-up(s) pendente(s)</div>
+      </div>
+      <div className="card" style={{padding:0}}>
+        {list.length === 0 ? (
+          <div className="empty">Nenhum follow-up pendente no momento.</div>
+        ) : (
+          <table>
+            <thead><tr><th>Cliente</th><th>Ação</th><th>Data prevista</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              {list.map(f => {
+                const atrasado = f.data_prevista < today();
+                return (
+                  <tr key={f.id}>
+                    <td>{f.clientes?.nome || "—"}<div className="muted">{f.clientes?.telefone || ""}</div></td>
+                    <td>{f.follow_up_regras?.descricao}</td>
+                    <td className="muted">{fmt(f.data_prevista)}</td>
+                    <td><span className={"pill " + (atrasado ? "atrasado" : "pendente")}>{atrasado ? "atrasado" : "pendente"}</span></td>
+                    <td>
+                      <button className="secondary" style={{marginRight:6}} onClick={()=>marcar(f.id, "feito")}>Feito</button>
+                      <button className="secondary" onClick={()=>marcar(f.id, "ignorado")}>Ignorar</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============ APP SHELL ============
+function App() {
+  const [session, setSession] = useState(null);
+  const [checking, setChecking] = useState(true);
+  const [tab, setTab] = useState("followups");
+
+  useEffect(() => {
+    sb.auth.getSession().then(({ data }) => { setSession(data.session); setChecking(false); });
+    const { data: sub } = sb.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  if (checking) return <div className="ui empty">Carregando...</div>;
+  if (!session) return <Login onLogin={setSession} />;
+
+  return (
+    <div className="ui shell">
+      <div className="toolbar">
+        <div>
+          <div className="brandmark">PETIT SABÓ</div>
+          <h1>CRM</h1>
+        </div>
+        <button className="secondary" onClick={()=>sb.auth.signOut()}>Sair</button>
+      </div>
+      <div className="tabs">
+        <div className={"tab " + (tab==="followups"?"active":"")} onClick={()=>setTab("followups")}>Follow-ups</div>
+        <div className={"tab " + (tab==="vendas"?"active":"")} onClick={()=>setTab("vendas")}>Vendas</div>
+        <div className={"tab " + (tab==="clientes"?"active":"")} onClick={()=>setTab("clientes")}>Clientes</div>
+      </div>
+      {tab === "followups" && <FollowUpsTab />}
+      {tab === "vendas" && <VendasTab />}
+      {tab === "clientes" && <ClientesTab />}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
