@@ -4,10 +4,19 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Petit Sabó — CRM</title>
-<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+  window.addEventListener('error', function(e){
+    if (!window.React || !window.ReactDOM || !window.supabase) {
+      var el = document.getElementById('root');
+      if (el && !el.innerHTML) {
+        el.innerHTML = '<div style="font-family:sans-serif;padding:40px;color:#B5544A;max-width:500px;margin:0 auto;">Um dos scripts externos (React, React DOM ou Supabase) não carregou. Verifique sua conexão ou tente recarregar a página. Se persistir, pode ser bloqueio de rede/firewall para CDNs.</div>';
+      }
+    }
+  }, true);
+</script>
 <style>
   :root{
     --bg: #FAF7F2;
@@ -102,151 +111,215 @@
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 </script>
 
-<script type="text/babel" data-presets="react">
-const { useState, useEffect, useCallback } = React;
-
+<script>
+const {
+  useState,
+  useEffect,
+  useCallback
+} = React;
 function addDays(dateStr, days) {
   const d = new Date(dateStr + "T00:00:00");
   d.setDate(d.getDate() + days);
   return d.toISOString().slice(0, 10);
 }
-function today() { return new Date().toISOString().slice(0, 10); }
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
 function fmt(d) {
   if (!d) return "—";
-  const [y,m,dd] = d.split("-");
+  const [y, m, dd] = d.split("-");
   return `${dd}/${m}/${y}`;
 }
 
 // ============ LOGIN ============
-function Login({ onLogin }) {
+function Login({
+  onLogin
+}) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
-
   async function submit(e) {
     e.preventDefault();
-    setLoading(true); setErr("");
-    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    setLoading(true);
+    setErr("");
+    const {
+      data,
+      error
+    } = await sb.auth.signInWithPassword({
+      email,
+      password
+    });
     setLoading(false);
-    if (error) { setErr("E-mail ou senha incorretos."); return; }
+    if (error) {
+      setErr("E-mail ou senha incorretos.");
+      return;
+    }
     onLogin(data.session);
   }
-
-  return (
-    <div className="ui login-wrap">
-      <div className="brandmark">PETIT SABÓ</div>
-      <h1 style={{fontSize:22}}>Entrar no CRM</h1>
-      <form className="card" onSubmit={submit}>
-        <label>E-mail</label>
-        <input type="email" value={email} onChange={e=>setEmail(e.target.value)} required />
-        <label>Senha</label>
-        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} required />
-        {err && <div className="err">{err}</div>}
-        <div style={{marginTop:16}}>
-          <button type="submit" disabled={loading} style={{width:"100%"}}>
-            {loading ? "Entrando..." : "Entrar"}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ui login-wrap"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "brandmark"
+  }, "PETIT SABÓ"), /*#__PURE__*/React.createElement("h1", {
+    style: {
+      fontSize: 22
+    }
+  }, "Entrar no CRM"), /*#__PURE__*/React.createElement("form", {
+    className: "card",
+    onSubmit: submit
+  }, /*#__PURE__*/React.createElement("label", null, "E-mail"), /*#__PURE__*/React.createElement("input", {
+    type: "email",
+    value: email,
+    onChange: e => setEmail(e.target.value),
+    required: true
+  }), /*#__PURE__*/React.createElement("label", null, "Senha"), /*#__PURE__*/React.createElement("input", {
+    type: "password",
+    value: password,
+    onChange: e => setPassword(e.target.value),
+    required: true
+  }), err && /*#__PURE__*/React.createElement("div", {
+    className: "err"
+  }, err), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 16
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "submit",
+    disabled: loading,
+    style: {
+      width: "100%"
+    }
+  }, loading ? "Entrando..." : "Entrar"))));
 }
 
 // ============ NOVO CLIENTE (inline form) ============
-function ClienteForm({ onSaved }) {
-  const [form, setForm] = useState({ nome:"", telefone:"", instagram_handle:"", email:"", data_nascimento:"" });
+function ClienteForm({
+  onSaved
+}) {
+  const [form, setForm] = useState({
+    nome: "",
+    telefone: "",
+    instagram_handle: "",
+    email: "",
+    data_nascimento: ""
+  });
   const [saving, setSaving] = useState(false);
-
   async function submit(e) {
     e.preventDefault();
     setSaving(true);
-    const payload = { ...form, data_nascimento: form.data_nascimento || null };
-    const { data, error } = await sb.from("clientes").insert(payload).select().single();
+    const payload = {
+      ...form,
+      data_nascimento: form.data_nascimento || null
+    };
+    const {
+      data,
+      error
+    } = await sb.from("clientes").insert(payload).select().single();
     setSaving(false);
-    if (!error) { onSaved(data); setForm({ nome:"", telefone:"", instagram_handle:"", email:"", data_nascimento:"" }); }
+    if (!error) {
+      onSaved(data);
+      setForm({
+        nome: "",
+        telefone: "",
+        instagram_handle: "",
+        email: "",
+        data_nascimento: ""
+      });
+    }
   }
-
-  return (
-    <form className="card" onSubmit={submit}>
-      <div className="row">
-        <div>
-          <label>Nome *</label>
-          <input value={form.nome} onChange={e=>setForm({...form, nome:e.target.value})} required />
-        </div>
-        <div>
-          <label>Telefone (WhatsApp)</label>
-          <input value={form.telefone} onChange={e=>setForm({...form, telefone:e.target.value})} />
-        </div>
-      </div>
-      <div className="row">
-        <div>
-          <label>Instagram</label>
-          <input value={form.instagram_handle} onChange={e=>setForm({...form, instagram_handle:e.target.value})} />
-        </div>
-        <div>
-          <label>Data de nascimento</label>
-          <input type="date" value={form.data_nascimento} onChange={e=>setForm({...form, data_nascimento:e.target.value})} />
-        </div>
-      </div>
-      <div style={{marginTop:12}}>
-        <button type="submit" disabled={saving}>{saving ? "Salvando..." : "Salvar cliente"}</button>
-      </div>
-    </form>
-  );
+  return /*#__PURE__*/React.createElement("form", {
+    className: "card",
+    onSubmit: submit
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Nome *"), /*#__PURE__*/React.createElement("input", {
+    value: form.nome,
+    onChange: e => setForm({
+      ...form,
+      nome: e.target.value
+    }),
+    required: true
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Telefone (WhatsApp)"), /*#__PURE__*/React.createElement("input", {
+    value: form.telefone,
+    onChange: e => setForm({
+      ...form,
+      telefone: e.target.value
+    })
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Instagram"), /*#__PURE__*/React.createElement("input", {
+    value: form.instagram_handle,
+    onChange: e => setForm({
+      ...form,
+      instagram_handle: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Data de nascimento"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: form.data_nascimento,
+    onChange: e => setForm({
+      ...form,
+      data_nascimento: e.target.value
+    })
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "submit",
+    disabled: saving
+  }, saving ? "Salvando..." : "Salvar cliente")));
 }
 
 // ============ CLIENTES TAB ============
 function ClientesTab() {
   const [clientes, setClientes] = useState([]);
   const [showForm, setShowForm] = useState(false);
-
   const load = useCallback(async () => {
-    const { data } = await sb.from("clientes").select("*").order("criado_em", { ascending:false });
+    const {
+      data
+    } = await sb.from("clientes").select("*").order("criado_em", {
+      ascending: false
+    });
     setClientes(data || []);
   }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  return (
-    <div>
-      <div className="toolbar">
-        <div className="muted">{clientes.length} cliente(s)</div>
-        <button className="secondary" onClick={()=>setShowForm(s=>!s)}>
-          {showForm ? "Cancelar" : "+ Novo cliente"}
-        </button>
-      </div>
-      {showForm && <ClienteForm onSaved={()=>{ setShowForm(false); load(); }} />}
-      <div className="card" style={{padding:0}}>
-        {clientes.length === 0 ? (
-          <div className="empty">Nenhum cliente cadastrado ainda.</div>
-        ) : (
-          <table>
-            <thead><tr><th>Nome</th><th>Contato</th><th>Tags</th><th>Desde</th></tr></thead>
-            <tbody>
-              {clientes.map(c => (
-                <tr key={c.id}>
-                  <td>{c.nome}</td>
-                  <td className="muted">{c.telefone || c.instagram_handle || c.email || "—"}</td>
-                  <td className="muted">{(c.tags||[]).join(", ") || "—"}</td>
-                  <td className="muted">{fmt(c.criado_em?.slice(0,10))}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
-  );
+  useEffect(() => {
+    load();
+  }, [load]);
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "toolbar"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "muted"
+  }, clientes.length, " cliente(s)"), /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    onClick: () => setShowForm(s => !s)
+  }, showForm ? "Cancelar" : "+ Novo cliente")), showForm && /*#__PURE__*/React.createElement(ClienteForm, {
+    onSaved: () => {
+      setShowForm(false);
+      load();
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 0
+    }
+  }, clientes.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "empty"
+  }, "Nenhum cliente cadastrado ainda.") : /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Nome"), /*#__PURE__*/React.createElement("th", null, "Contato"), /*#__PURE__*/React.createElement("th", null, "Tags"), /*#__PURE__*/React.createElement("th", null, "Desde"))), /*#__PURE__*/React.createElement("tbody", null, clientes.map(c => /*#__PURE__*/React.createElement("tr", {
+    key: c.id
+  }, /*#__PURE__*/React.createElement("td", null, c.nome), /*#__PURE__*/React.createElement("td", {
+    className: "muted"
+  }, c.telefone || c.instagram_handle || c.email || "—"), /*#__PURE__*/React.createElement("td", {
+    className: "muted"
+  }, (c.tags || []).join(", ") || "—"), /*#__PURE__*/React.createElement("td", {
+    className: "muted"
+  }, fmt(c.criado_em?.slice(0, 10)))))))));
 }
 
 // ============ NOVA VENDA + GERAÇÃO DE FOLLOW-UPS ============
 
 // Chaves de regras vinculadas a venda (apos_venda / apos_recebimento)
-const REGRAS_POR_VENDA = [
-  "confirmacao_whatsapp","feedback_pos_compra",
-  "cashback_disponivel","cashback_10_dias","cashback_3_dias","cashback_expirado"
-];
+const REGRAS_POR_VENDA = ["confirmacao_whatsapp", "feedback_pos_compra", "cashback_disponivel", "cashback_10_dias", "cashback_3_dias", "cashback_expirado"];
 const OFFSETS = {
   confirmacao_whatsapp: 0,
   feedback_pos_compra: 8,
@@ -254,263 +327,347 @@ const OFFSETS = {
   cashback_10_dias: 45,
   cashback_3_dias: 52,
   cashback_expirado: 55,
-  reativacao_60: 60, reativacao_90: 90, reativacao_120: 120,
-  reativacao_150: 150, reativacao_180: 180,
-  reativacao_240: 240, reativacao_365: 365,
+  reativacao_60: 60,
+  reativacao_90: 90,
+  reativacao_120: 120,
+  reativacao_150: 150,
+  reativacao_180: 180,
+  reativacao_240: 240,
+  reativacao_365: 365
 };
-const REATIVACAO_CHAVES = ["reativacao_60","reativacao_90","reativacao_120","reativacao_150","reativacao_180","reativacao_240","reativacao_365"];
-
-function VendaForm({ onSaved }) {
+const REATIVACAO_CHAVES = ["reativacao_60", "reativacao_90", "reativacao_120", "reativacao_150", "reativacao_180", "reativacao_240", "reativacao_365"];
+function VendaForm({
+  onSaved
+}) {
   const [clientes, setClientes] = useState([]);
   const [canais, setCanais] = useState([]);
   const [regras, setRegras] = useState([]);
-  const [form, setForm] = useState({ cliente_id:"", canal_id:"", valor:"", data_venda: today(), data_recebimento:"", cashback_valor:"", incluir_whatsapp:false });
+  const [form, setForm] = useState({
+    cliente_id: "",
+    canal_id: "",
+    valor: "",
+    data_venda: today(),
+    data_recebimento: "",
+    cashback_valor: "",
+    incluir_whatsapp: false
+  });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
-
   useEffect(() => {
     (async () => {
-      const [{data:cli}, {data:can}, {data:reg}] = await Promise.all([
-        sb.from("clientes").select("id,nome").order("nome"),
-        sb.from("canais").select("id,nome"),
-        sb.from("follow_up_regras").select("*").eq("ativo", true),
-      ]);
-      setClientes(cli || []); setCanais(can || []); setRegras(reg || []);
+      const [{
+        data: cli
+      }, {
+        data: can
+      }, {
+        data: reg
+      }] = await Promise.all([sb.from("clientes").select("id,nome").order("nome"), sb.from("canais").select("id,nome"), sb.from("follow_up_regras").select("*").eq("ativo", true)]);
+      setClientes(cli || []);
+      setCanais(can || []);
+      setRegras(reg || []);
     })();
   }, []);
-
-  const regraByChave = (chave) => regras.find(r => r.chave === chave);
-
+  const regraByChave = chave => regras.find(r => r.chave === chave);
   async function gerarFollowUpsDaVenda(venda, clienteId) {
     const inserts = [];
     for (const chave of REGRAS_POR_VENDA) {
       if (chave === "confirmacao_whatsapp" && !form.incluir_whatsapp) continue;
       const regra = regraByChave(chave);
       if (!regra) continue;
-      const base = chave === "feedback_pos_compra" ? (form.data_recebimento || venda.data_venda) : venda.data_venda;
+      const base = chave === "feedback_pos_compra" ? form.data_recebimento || venda.data_venda : venda.data_venda;
       inserts.push({
-        regra_id: regra.id, cliente_id: clienteId, venda_id: venda.id,
-        data_prevista: addDays(base, OFFSETS[chave]), status: "pendente",
+        regra_id: regra.id,
+        cliente_id: clienteId,
+        venda_id: venda.id,
+        data_prevista: addDays(base, OFFSETS[chave]),
+        status: "pendente"
       });
     }
     if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
   }
-
   async function gerenciarCashback(venda, clienteId) {
     if (!form.cashback_valor) return;
     await sb.from("cashback").insert({
-      venda_id: venda.id, cliente_id: clienteId,
+      venda_id: venda.id,
+      cliente_id: clienteId,
       valor: parseFloat(form.cashback_valor),
       data_liberacao: addDays(venda.data_venda, 15),
       data_validade: addDays(venda.data_venda, 55),
-      status: "pendente",
+      status: "pendente"
     });
   }
-
   async function resetarReativacao(clienteId, novaData) {
     // Cancela reativações pendentes antigas
     const regraIds = regras.filter(r => REATIVACAO_CHAVES.includes(r.chave)).map(r => r.id);
     if (regraIds.length) {
-      await sb.from("follow_up_instancias")
-        .update({ status: "cancelado" })
-        .eq("cliente_id", clienteId)
-        .in("regra_id", regraIds)
-        .eq("status", "pendente");
+      await sb.from("follow_up_instancias").update({
+        status: "cancelado"
+      }).eq("cliente_id", clienteId).in("regra_id", regraIds).eq("status", "pendente");
     }
     // Gera novas a partir da nova compra
     const inserts = REATIVACAO_CHAVES.map(chave => {
       const regra = regraByChave(chave);
-      return regra ? { regra_id: regra.id, cliente_id: clienteId, venda_id: null,
-        data_prevista: addDays(novaData, OFFSETS[chave]), status: "pendente" } : null;
+      return regra ? {
+        regra_id: regra.id,
+        cliente_id: clienteId,
+        venda_id: null,
+        data_prevista: addDays(novaData, OFFSETS[chave]),
+        status: "pendente"
+      } : null;
     }).filter(Boolean);
     if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
   }
-
   async function checarFidelidade(clienteId, vendaData) {
-    const { count } = await sb.from("vendas").select("id", { count: "exact", head:true }).eq("cliente_id", clienteId);
-    const marcos = { 3: "fidelidade_3_compras", 5: "fidelidade_5_compras" };
+    const {
+      count
+    } = await sb.from("vendas").select("id", {
+      count: "exact",
+      head: true
+    }).eq("cliente_id", clienteId);
+    const marcos = {
+      3: "fidelidade_3_compras",
+      5: "fidelidade_5_compras"
+    };
     const chave = marcos[count];
     if (!chave) return;
     const regra = regraByChave(chave);
     if (!regra) return;
-    const { data: existente } = await sb.from("follow_up_instancias").select("id").eq("cliente_id", clienteId).eq("regra_id", regra.id);
+    const {
+      data: existente
+    } = await sb.from("follow_up_instancias").select("id").eq("cliente_id", clienteId).eq("regra_id", regra.id);
     if (existente && existente.length) return; // já gerado antes
-    await sb.from("follow_up_instancias").insert({ regra_id: regra.id, cliente_id: clienteId, venda_id: null, data_prevista: vendaData, status: "pendente" });
+    await sb.from("follow_up_instancias").insert({
+      regra_id: regra.id,
+      cliente_id: clienteId,
+      venda_id: null,
+      data_prevista: vendaData,
+      status: "pendente"
+    });
   }
-
   async function submit(e) {
     e.preventDefault();
-    setErr(""); setSaving(true);
+    setErr("");
+    setSaving(true);
     try {
-      const { data: venda, error } = await sb.from("vendas").insert({
-        cliente_id: form.cliente_id, canal_id: form.canal_id,
-        valor: parseFloat(form.valor), data_venda: form.data_venda,
-        data_recebimento: form.data_recebimento || null,
+      const {
+        data: venda,
+        error
+      } = await sb.from("vendas").insert({
+        cliente_id: form.cliente_id,
+        canal_id: form.canal_id,
+        valor: parseFloat(form.valor),
+        data_venda: form.data_venda,
+        data_recebimento: form.data_recebimento || null
       }).select().single();
       if (error) throw error;
-
       await gerarFollowUpsDaVenda(venda, form.cliente_id);
       await gerenciarCashback(venda, form.cliente_id);
       await resetarReativacao(form.cliente_id, form.data_venda);
       await checarFidelidade(form.cliente_id, form.data_venda);
-
       onSaved();
-      setForm({ cliente_id:"", canal_id:"", valor:"", data_venda: today(), data_recebimento:"", cashback_valor:"", incluir_whatsapp:false });
+      setForm({
+        cliente_id: "",
+        canal_id: "",
+        valor: "",
+        data_venda: today(),
+        data_recebimento: "",
+        cashback_valor: "",
+        incluir_whatsapp: false
+      });
     } catch (e2) {
       setErr("Erro ao salvar: " + e2.message);
     }
     setSaving(false);
   }
-
-  return (
-    <form className="card" onSubmit={submit}>
-      <div className="row">
-        <div>
-          <label>Cliente *</label>
-          <select value={form.cliente_id} onChange={e=>setForm({...form, cliente_id:e.target.value})} required>
-            <option value="">Selecionar...</option>
-            {clientes.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-          </select>
-        </div>
-        <div>
-          <label>Canal *</label>
-          <select value={form.canal_id} onChange={e=>setForm({...form, canal_id:e.target.value})} required>
-            <option value="">Selecionar...</option>
-            {canais.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-          </select>
-        </div>
-      </div>
-      <div className="row">
-        <div>
-          <label>Valor (R$) *</label>
-          <input type="number" step="0.01" value={form.valor} onChange={e=>setForm({...form, valor:e.target.value})} required />
-        </div>
-        <div>
-          <label>Data da venda</label>
-          <input type="date" value={form.data_venda} onChange={e=>setForm({...form, data_venda:e.target.value})} />
-        </div>
-      </div>
-      <div className="row">
-        <div>
-          <label>Data de recebimento (opcional)</label>
-          <input type="date" value={form.data_recebimento} onChange={e=>setForm({...form, data_recebimento:e.target.value})} />
-        </div>
-        <div>
-          <label>Cashback gerado (R$, opcional)</label>
-          <input type="number" step="0.01" value={form.cashback_valor} onChange={e=>setForm({...form, cashback_valor:e.target.value})} />
-        </div>
-      </div>
-      <label style={{display:"flex", alignItems:"center", gap:8, marginTop:12}}>
-        <input type="checkbox" style={{width:"auto"}} checked={form.incluir_whatsapp} onChange={e=>setForm({...form, incluir_whatsapp:e.target.checked})} />
-        <span className="muted">Incluir confirmação de compra via WhatsApp</span>
-      </label>
-      {err && <div className="err">{err}</div>}
-      <div style={{marginTop:16}}>
-        <button type="submit" disabled={saving}>{saving ? "Salvando..." : "Registrar venda"}</button>
-      </div>
-    </form>
-  );
+  return /*#__PURE__*/React.createElement("form", {
+    className: "card",
+    onSubmit: submit
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Cliente *"), /*#__PURE__*/React.createElement("select", {
+    value: form.cliente_id,
+    onChange: e => setForm({
+      ...form,
+      cliente_id: e.target.value
+    }),
+    required: true
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Selecionar..."), clientes.map(c => /*#__PURE__*/React.createElement("option", {
+    key: c.id,
+    value: c.id
+  }, c.nome)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Canal *"), /*#__PURE__*/React.createElement("select", {
+    value: form.canal_id,
+    onChange: e => setForm({
+      ...form,
+      canal_id: e.target.value
+    }),
+    required: true
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Selecionar..."), canais.map(c => /*#__PURE__*/React.createElement("option", {
+    key: c.id,
+    value: c.id
+  }, c.nome))))), /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Valor (R$) *"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    step: "0.01",
+    value: form.valor,
+    onChange: e => setForm({
+      ...form,
+      valor: e.target.value
+    }),
+    required: true
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Data da venda"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: form.data_venda,
+    onChange: e => setForm({
+      ...form,
+      data_venda: e.target.value
+    })
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Data de recebimento (opcional)"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: form.data_recebimento,
+    onChange: e => setForm({
+      ...form,
+      data_recebimento: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Cashback gerado (R$, opcional)"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    step: "0.01",
+    value: form.cashback_valor,
+    onChange: e => setForm({
+      ...form,
+      cashback_valor: e.target.value
+    })
+  }))), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    style: {
+      width: "auto"
+    },
+    checked: form.incluir_whatsapp,
+    onChange: e => setForm({
+      ...form,
+      incluir_whatsapp: e.target.checked
+    })
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "muted"
+  }, "Incluir confirmação de compra via WhatsApp")), err && /*#__PURE__*/React.createElement("div", {
+    className: "err"
+  }, err), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 16
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "submit",
+    disabled: saving
+  }, saving ? "Salvando..." : "Registrar venda")));
 }
-
 function VendasTab() {
   const [vendas, setVendas] = useState([]);
   const [showForm, setShowForm] = useState(true);
-
   const load = useCallback(async () => {
-    const { data } = await sb.from("vendas")
-      .select("*, clientes(nome), canais(nome)")
-      .order("data_venda", { ascending:false }).limit(30);
+    const {
+      data
+    } = await sb.from("vendas").select("*, clientes(nome), canais(nome)").order("data_venda", {
+      ascending: false
+    }).limit(30);
     setVendas(data || []);
   }, []);
-  useEffect(() => { load(); }, [load]);
-
-  return (
-    <div>
-      <div className="toolbar">
-        <div className="muted">Últimas vendas</div>
-        <button className="secondary" onClick={()=>setShowForm(s=>!s)}>
-          {showForm ? "Ocultar formulário" : "+ Nova venda"}
-        </button>
-      </div>
-      {showForm && <VendaForm onSaved={load} />}
-      <div className="card" style={{padding:0}}>
-        {vendas.length === 0 ? (
-          <div className="empty">Nenhuma venda registrada ainda.</div>
-        ) : (
-          <table>
-            <thead><tr><th>Cliente</th><th>Canal</th><th>Valor</th><th>Data</th></tr></thead>
-            <tbody>
-              {vendas.map(v => (
-                <tr key={v.id}>
-                  <td>{v.clientes?.nome || "—"}</td>
-                  <td className="muted">{v.canais?.nome || "—"}</td>
-                  <td>R$ {Number(v.valor).toFixed(2)}</td>
-                  <td className="muted">{fmt(v.data_venda)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
-  );
+  useEffect(() => {
+    load();
+  }, [load]);
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "toolbar"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "muted"
+  }, "Últimas vendas"), /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    onClick: () => setShowForm(s => !s)
+  }, showForm ? "Ocultar formulário" : "+ Nova venda")), showForm && /*#__PURE__*/React.createElement(VendaForm, {
+    onSaved: load
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 0
+    }
+  }, vendas.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "empty"
+  }, "Nenhuma venda registrada ainda.") : /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Cliente"), /*#__PURE__*/React.createElement("th", null, "Canal"), /*#__PURE__*/React.createElement("th", null, "Valor"), /*#__PURE__*/React.createElement("th", null, "Data"))), /*#__PURE__*/React.createElement("tbody", null, vendas.map(v => /*#__PURE__*/React.createElement("tr", {
+    key: v.id
+  }, /*#__PURE__*/React.createElement("td", null, v.clientes?.nome || "—"), /*#__PURE__*/React.createElement("td", {
+    className: "muted"
+  }, v.canais?.nome || "—"), /*#__PURE__*/React.createElement("td", null, "R$ ", Number(v.valor).toFixed(2)), /*#__PURE__*/React.createElement("td", {
+    className: "muted"
+  }, fmt(v.data_venda))))))));
 }
 
 // ============ FOLLOW-UPS TAB ============
 function FollowUpsTab() {
   const [items, setItems] = useState([]);
   const [filtro, setFiltro] = useState("pendente");
-
   const load = useCallback(async () => {
-    const { data } = await sb.from("follow_up_instancias")
-      .select("*, clientes(nome, telefone), follow_up_regras(descricao, chave)")
-      .eq("status", "pendente")
-      .order("data_prevista", { ascending:true })
-      .limit(100);
+    const {
+      data
+    } = await sb.from("follow_up_instancias").select("*, clientes(nome, telefone), follow_up_regras(descricao, chave)").eq("status", "pendente").order("data_prevista", {
+      ascending: true
+    }).limit(100);
     setItems(data || []);
   }, []);
-  useEffect(() => { load(); }, [load]);
-
+  useEffect(() => {
+    load();
+  }, [load]);
   async function marcar(id, status) {
-    await sb.from("follow_up_instancias").update({ status, atualizado_em: new Date().toISOString() }).eq("id", id);
+    await sb.from("follow_up_instancias").update({
+      status,
+      atualizado_em: new Date().toISOString()
+    }).eq("id", id);
     load();
   }
-
   const list = items; // já filtrado por pendente na query
 
-  return (
-    <div>
-      <div className="toolbar">
-        <div className="muted">{list.length} follow-up(s) pendente(s)</div>
-      </div>
-      <div className="card" style={{padding:0}}>
-        {list.length === 0 ? (
-          <div className="empty">Nenhum follow-up pendente no momento.</div>
-        ) : (
-          <table>
-            <thead><tr><th>Cliente</th><th>Ação</th><th>Data prevista</th><th>Status</th><th></th></tr></thead>
-            <tbody>
-              {list.map(f => {
-                const atrasado = f.data_prevista < today();
-                return (
-                  <tr key={f.id}>
-                    <td>{f.clientes?.nome || "—"}<div className="muted">{f.clientes?.telefone || ""}</div></td>
-                    <td>{f.follow_up_regras?.descricao}</td>
-                    <td className="muted">{fmt(f.data_prevista)}</td>
-                    <td><span className={"pill " + (atrasado ? "atrasado" : "pendente")}>{atrasado ? "atrasado" : "pendente"}</span></td>
-                    <td>
-                      <button className="secondary" style={{marginRight:6}} onClick={()=>marcar(f.id, "feito")}>Feito</button>
-                      <button className="secondary" onClick={()=>marcar(f.id, "ignorado")}>Ignorar</button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </div>
-  );
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "toolbar"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "muted"
+  }, list.length, " follow-up(s) pendente(s)")), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 0
+    }
+  }, list.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "empty"
+  }, "Nenhum follow-up pendente no momento.") : /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Cliente"), /*#__PURE__*/React.createElement("th", null, "Ação"), /*#__PURE__*/React.createElement("th", null, "Data prevista"), /*#__PURE__*/React.createElement("th", null, "Status"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, list.map(f => {
+    const atrasado = f.data_prevista < today();
+    return /*#__PURE__*/React.createElement("tr", {
+      key: f.id
+    }, /*#__PURE__*/React.createElement("td", null, f.clientes?.nome || "—", /*#__PURE__*/React.createElement("div", {
+      className: "muted"
+    }, f.clientes?.telefone || "")), /*#__PURE__*/React.createElement("td", null, f.follow_up_regras?.descricao), /*#__PURE__*/React.createElement("td", {
+      className: "muted"
+    }, fmt(f.data_prevista)), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
+      className: "pill " + (atrasado ? "atrasado" : "pendente")
+    }, atrasado ? "atrasado" : "pendente")), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("button", {
+      className: "secondary",
+      style: {
+        marginRight: 6
+      },
+      onClick: () => marcar(f.id, "feito")
+    }, "Feito"), /*#__PURE__*/React.createElement("button", {
+      className: "secondary",
+      onClick: () => marcar(f.id, "ignorado")
+    }, "Ignorar")));
+  })))));
 }
 
 // ============ APP SHELL ============
@@ -518,38 +675,47 @@ function App() {
   const [session, setSession] = useState(null);
   const [checking, setChecking] = useState(true);
   const [tab, setTab] = useState("followups");
-
   useEffect(() => {
-    sb.auth.getSession().then(({ data }) => { setSession(data.session); setChecking(false); });
-    const { data: sub } = sb.auth.onAuthStateChange((_e, s) => setSession(s));
+    sb.auth.getSession().then(({
+      data
+    }) => {
+      setSession(data.session);
+      setChecking(false);
+    });
+    const {
+      data: sub
+    } = sb.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
-
-  if (checking) return <div className="ui empty">Carregando...</div>;
-  if (!session) return <Login onLogin={setSession} />;
-
-  return (
-    <div className="ui shell">
-      <div className="toolbar">
-        <div>
-          <div className="brandmark">PETIT SABÓ</div>
-          <h1>CRM</h1>
-        </div>
-        <button className="secondary" onClick={()=>sb.auth.signOut()}>Sair</button>
-      </div>
-      <div className="tabs">
-        <div className={"tab " + (tab==="followups"?"active":"")} onClick={()=>setTab("followups")}>Follow-ups</div>
-        <div className={"tab " + (tab==="vendas"?"active":"")} onClick={()=>setTab("vendas")}>Vendas</div>
-        <div className={"tab " + (tab==="clientes"?"active":"")} onClick={()=>setTab("clientes")}>Clientes</div>
-      </div>
-      {tab === "followups" && <FollowUpsTab />}
-      {tab === "vendas" && <VendasTab />}
-      {tab === "clientes" && <ClientesTab />}
-    </div>
-  );
+  if (checking) return /*#__PURE__*/React.createElement("div", {
+    className: "ui empty"
+  }, "Carregando...");
+  if (!session) return /*#__PURE__*/React.createElement(Login, {
+    onLogin: setSession
+  });
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ui shell"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "toolbar"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "brandmark"
+  }, "PETIT SABÓ"), /*#__PURE__*/React.createElement("h1", null, "CRM")), /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    onClick: () => sb.auth.signOut()
+  }, "Sair")), /*#__PURE__*/React.createElement("div", {
+    className: "tabs"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "tab " + (tab === "followups" ? "active" : ""),
+    onClick: () => setTab("followups")
+  }, "Follow-ups"), /*#__PURE__*/React.createElement("div", {
+    className: "tab " + (tab === "vendas" ? "active" : ""),
+    onClick: () => setTab("vendas")
+  }, "Vendas"), /*#__PURE__*/React.createElement("div", {
+    className: "tab " + (tab === "clientes" ? "active" : ""),
+    onClick: () => setTab("clientes")
+  }, "Clientes")), tab === "followups" && /*#__PURE__*/React.createElement(FollowUpsTab, null), tab === "vendas" && /*#__PURE__*/React.createElement(VendasTab, null), tab === "clientes" && /*#__PURE__*/React.createElement(ClientesTab, null));
 }
-
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.createElement(App, null));
 </script>
 </body>
 </html>
