@@ -7,6 +7,7 @@
 <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5/papaparse.min.js"></script>
 <script>
   window.addEventListener('error', function(e){
     if (!window.React || !window.ReactDOM || !window.supabase) {
@@ -193,11 +194,20 @@ function Login({
   }, loading ? "Entrando..." : "Entrar"))));
 }
 
-// ============ NOVO CLIENTE (inline form) ============
+// ============ NOVO / EDITAR CLIENTE (inline form) ============
 function ClienteForm({
-  onSaved
+  onSaved,
+  onCancel,
+  initial
 }) {
-  const [form, setForm] = useState({
+  const isEdit = !!(initial && initial.id);
+  const [form, setForm] = useState(initial ? {
+    nome: initial.nome || "",
+    telefone: initial.telefone || "",
+    instagram_handle: initial.instagram_handle || "",
+    email: initial.email || "",
+    data_nascimento: initial.data_nascimento || ""
+  } : {
     nome: "",
     telefone: "",
     instagram_handle: "",
@@ -212,20 +222,35 @@ function ClienteForm({
       ...form,
       data_nascimento: form.data_nascimento || null
     };
-    const {
-      data,
-      error
-    } = await sb.from("clientes").insert(payload).select().single();
-    setSaving(false);
-    if (!error) {
-      onSaved(data);
-      setForm({
-        nome: "",
-        telefone: "",
-        instagram_handle: "",
-        email: "",
-        data_nascimento: ""
-      });
+    if (isEdit) {
+      const {
+        data,
+        error
+      } = await sb.from("clientes").update(payload).eq("id", initial.id).select().single();
+      setSaving(false);
+      if (!error) onSaved(data);
+    } else {
+      const {
+        data,
+        error
+      } = await sb.from("clientes").insert(payload).select().single();
+      if (!error) {
+        const {
+          data: regras
+        } = await sb.from("follow_up_regras").select("*").eq("ativo", true);
+        await gerarFollowUpsCadastro(data, regras || []);
+      }
+      setSaving(false);
+      if (!error) {
+        onSaved(data);
+        setForm({
+          nome: "",
+          telefone: "",
+          instagram_handle: "",
+          email: "",
+          data_nascimento: ""
+        });
+      }
     }
   }
   return /*#__PURE__*/React.createElement("form", {
@@ -263,18 +288,152 @@ function ClienteForm({
     })
   }))), /*#__PURE__*/React.createElement("div", {
     style: {
-      marginTop: 12
+      marginTop: 12,
+      display: "flex",
+      gap: 8
     }
   }, /*#__PURE__*/React.createElement("button", {
     type: "submit",
     disabled: saving
-  }, saving ? "Salvando..." : "Salvar cliente")));
+  }, saving ? "Salvando..." : isEdit ? "Salvar alterações" : "Salvar cliente"), isEdit && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "secondary",
+    onClick: onCancel
+  }, "Cancelar")));
+}
+
+// ============ IMPORTAR CSV — CLIENTES ============
+function ImportClientesModal({
+  onClose,
+  onDone
+}) {
+  const [rows, setRows] = useState(null);
+  const [headers, setHeaders] = useState([]);
+  const [map, setMap] = useState({
+    nome: "",
+    telefone: "",
+    instagram_handle: "",
+    email: "",
+    data_nascimento: ""
+  });
+  const [status, setStatus] = useState("");
+  const [importing, setImporting] = useState(false);
+  function onFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    window.Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: res => {
+        setRows(res.data);
+        setHeaders(res.meta.fields || []);
+      }
+    });
+  }
+  async function importar() {
+    if (!rows || !map.nome) {
+      setStatus("Selecione ao menos a coluna de Nome.");
+      return;
+    }
+    setImporting(true);
+    const {
+      data: regras
+    } = await sb.from("follow_up_regras").select("*").eq("ativo", true);
+    let ok = 0,
+      fail = 0;
+    for (const row of rows) {
+      const nome = (row[map.nome] || "").trim();
+      if (!nome) continue;
+      const payload = {
+        nome,
+        telefone: map.telefone ? (row[map.telefone] || "").trim() : null,
+        instagram_handle: map.instagram_handle ? (row[map.instagram_handle] || "").trim() : null,
+        email: map.email ? (row[map.email] || "").trim() : null,
+        data_nascimento: map.data_nascimento ? (row[map.data_nascimento] || "").trim() || null : null
+      };
+      const {
+        data,
+        error
+      } = await sb.from("clientes").insert(payload).select().single();
+      if (error) {
+        fail++;
+        continue;
+      }
+      ok++;
+      await gerarFollowUpsCadastro(data, regras || []);
+    }
+    setImporting(false);
+    setStatus(`Importação concluída: ${ok} cliente(s) importado(s), ${fail} erro(s).`);
+    onDone();
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      alignItems: "center"
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "Importar clientes (CSV)")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    onClick: onClose
+  }, "Fechar"))), /*#__PURE__*/React.createElement("label", null, "Arquivo CSV (exportado do app de vendas)"), /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: ".csv",
+    onChange: onFile
+  }), headers.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "muted",
+    style: {
+      marginTop: 12
+    }
+  }, rows.length, " linha(s) encontrada(s). Associe as colunas:"), ["nome", "telefone", "instagram_handle", "email", "data_nascimento"].map(campo => /*#__PURE__*/React.createElement("div", {
+    key: campo,
+    className: "row",
+    style: {
+      marginTop: 8,
+      alignItems: "center"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "muted",
+    style: {
+      flex: "0 0 160px"
+    }
+  }, campo === "nome" ? "Nome *" : campo), /*#__PURE__*/React.createElement("select", {
+    value: map[campo],
+    onChange: e => setMap({
+      ...map,
+      [campo]: e.target.value
+    })
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "— não importar —"), headers.map(h => /*#__PURE__*/React.createElement("option", {
+    key: h,
+    value: h
+  }, h))))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 16
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: importar,
+    disabled: importing
+  }, importing ? "Importando..." : "Importar"))), status && /*#__PURE__*/React.createElement("div", {
+    className: "muted",
+    style: {
+      marginTop: 12
+    }
+  }, status));
 }
 
 // ============ CLIENTES TAB ============
 function ClientesTab() {
   const [clientes, setClientes] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [editing, setEditing] = useState(null);
   const load = useCallback(async () => {
     const {
       data
@@ -286,16 +445,51 @@ function ClientesTab() {
   useEffect(() => {
     load();
   }, [load]);
+  async function excluir(c) {
+    if (!window.confirm(`Excluir o cliente "${c.nome}"? Isso não pode ser desfeito.`)) return;
+    const {
+      error
+    } = await sb.from("clientes").delete().eq("id", c.id);
+    if (error) {
+      window.alert("Não foi possível excluir: esse cliente já tem vendas ou follow-ups registrados. Exclua as vendas dele primeiro, se realmente quiser removê-lo.");
+    } else {
+      load();
+    }
+  }
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "toolbar"
   }, /*#__PURE__*/React.createElement("div", {
     className: "muted"
-  }, clientes.length, " cliente(s)"), /*#__PURE__*/React.createElement("button", {
+  }, clientes.length, " cliente(s)"), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
     className: "secondary",
-    onClick: () => setShowForm(s => !s)
-  }, showForm ? "Cancelar" : "+ Novo cliente")), showForm && /*#__PURE__*/React.createElement(ClienteForm, {
+    style: {
+      marginRight: 8
+    },
+    onClick: () => {
+      setShowImport(s => !s);
+      setShowForm(false);
+      setEditing(null);
+    }
+  }, showImport ? "Cancelar" : "Importar CSV"), /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    onClick: () => {
+      setShowForm(s => !s);
+      setShowImport(false);
+      setEditing(null);
+    }
+  }, showForm ? "Cancelar" : "+ Novo cliente"))), showImport && /*#__PURE__*/React.createElement(ImportClientesModal, {
+    onClose: () => setShowImport(false),
+    onDone: load
+  }), showForm && /*#__PURE__*/React.createElement(ClienteForm, {
     onSaved: () => {
       setShowForm(false);
+      load();
+    }
+  }), editing && /*#__PURE__*/React.createElement(ClienteForm, {
+    initial: editing,
+    onCancel: () => setEditing(null),
+    onSaved: () => {
+      setEditing(null);
       load();
     }
   }), /*#__PURE__*/React.createElement("div", {
@@ -305,7 +499,7 @@ function ClientesTab() {
     }
   }, clientes.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "empty"
-  }, "Nenhum cliente cadastrado ainda.") : /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Nome"), /*#__PURE__*/React.createElement("th", null, "Contato"), /*#__PURE__*/React.createElement("th", null, "Tags"), /*#__PURE__*/React.createElement("th", null, "Desde"))), /*#__PURE__*/React.createElement("tbody", null, clientes.map(c => /*#__PURE__*/React.createElement("tr", {
+  }, "Nenhum cliente cadastrado ainda.") : /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Nome"), /*#__PURE__*/React.createElement("th", null, "Contato"), /*#__PURE__*/React.createElement("th", null, "Tags"), /*#__PURE__*/React.createElement("th", null, "Desde"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, clientes.map(c => /*#__PURE__*/React.createElement("tr", {
     key: c.id
   }, /*#__PURE__*/React.createElement("td", null, c.nome), /*#__PURE__*/React.createElement("td", {
     className: "muted"
@@ -313,7 +507,20 @@ function ClientesTab() {
     className: "muted"
   }, (c.tags || []).join(", ") || "—"), /*#__PURE__*/React.createElement("td", {
     className: "muted"
-  }, fmt(c.criado_em?.slice(0, 10)))))))));
+  }, fmt(c.criado_em?.slice(0, 10))), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    style: {
+      marginRight: 6
+    },
+    onClick: () => {
+      setEditing(c);
+      setShowForm(false);
+      setShowImport(false);
+    }
+  }, "Editar"), /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    onClick: () => excluir(c)
+  }, "Excluir"))))))));
 }
 
 // ============ NOVA VENDA + GERAÇÃO DE FOLLOW-UPS ============
@@ -336,6 +543,131 @@ const OFFSETS = {
   reativacao_365: 365
 };
 const REATIVACAO_CHAVES = ["reativacao_60", "reativacao_90", "reativacao_120", "reativacao_150", "reativacao_180", "reativacao_240", "reativacao_365"];
+const CADASTRO_CHAVES = ["cadastro_storytelling", "cadastro_lembrete_cupom", "cadastro_segunda_tentativa", "cadastro_oferta_troca", "cadastro_reclassificacao"];
+const OFFSETS_CADASTRO = {
+  cadastro_storytelling: 6,
+  cadastro_lembrete_cupom: 12,
+  cadastro_segunda_tentativa: 25,
+  cadastro_oferta_troca: 45,
+  cadastro_reclassificacao: 67
+};
+
+// ---- Funções compartilhadas de geração de follow-up (usadas no form manual e na importação) ----
+function regraByChave(regras, chave) {
+  return regras.find(r => r.chave === chave);
+}
+
+// Gera a régua de conversão para um cliente recém-cadastrado que ainda não comprou
+async function gerarFollowUpsCadastro(cliente, regras) {
+  const dataBase = (cliente.criado_em || new Date().toISOString()).slice(0, 10);
+  const inserts = CADASTRO_CHAVES.map(chave => {
+    const regra = regraByChave(regras, chave);
+    return regra ? {
+      regra_id: regra.id,
+      cliente_id: cliente.id,
+      venda_id: null,
+      data_prevista: addDays(dataBase, OFFSETS_CADASTRO[chave]),
+      status: "pendente"
+    } : null;
+  }).filter(Boolean);
+  if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
+}
+
+// Cancela a régua de conversão quando o cliente faz a primeira compra
+async function cancelarFollowUpsCadastro(clienteId, regras) {
+  const regraIds = regras.filter(r => CADASTRO_CHAVES.includes(r.chave)).map(r => r.id);
+  if (!regraIds.length) return;
+  await sb.from("follow_up_instancias").update({
+    status: "cancelado"
+  }).eq("cliente_id", clienteId).in("regra_id", regraIds).eq("status", "pendente");
+}
+async function gerarFollowUpsDaVenda(venda, clienteId, regras, incluirWhatsapp, dataRecebimento) {
+  const inserts = [];
+  for (const chave of REGRAS_POR_VENDA) {
+    if (chave === "confirmacao_whatsapp" && !incluirWhatsapp) continue;
+    const regra = regraByChave(regras, chave);
+    if (!regra) continue;
+    const base = chave === "feedback_pos_compra" ? dataRecebimento || venda.data_venda : venda.data_venda;
+    inserts.push({
+      regra_id: regra.id,
+      cliente_id: clienteId,
+      venda_id: venda.id,
+      data_prevista: addDays(base, OFFSETS[chave]),
+      status: "pendente"
+    });
+  }
+  if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
+}
+async function gerenciarCashback(venda, clienteId, cashbackValor) {
+  if (!cashbackValor) return;
+  await sb.from("cashback").insert({
+    venda_id: venda.id,
+    cliente_id: clienteId,
+    valor: parseFloat(cashbackValor),
+    data_liberacao: addDays(venda.data_venda, 15),
+    data_validade: addDays(venda.data_venda, 55),
+    status: "pendente"
+  });
+}
+async function resetarReativacao(clienteId, novaData, regras) {
+  const regraIds = regras.filter(r => REATIVACAO_CHAVES.includes(r.chave)).map(r => r.id);
+  if (regraIds.length) {
+    await sb.from("follow_up_instancias").update({
+      status: "cancelado"
+    }).eq("cliente_id", clienteId).in("regra_id", regraIds).eq("status", "pendente");
+  }
+  const inserts = REATIVACAO_CHAVES.map(chave => {
+    const regra = regraByChave(regras, chave);
+    return regra ? {
+      regra_id: regra.id,
+      cliente_id: clienteId,
+      venda_id: null,
+      data_prevista: addDays(novaData, OFFSETS[chave]),
+      status: "pendente"
+    } : null;
+  }).filter(Boolean);
+  if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
+}
+async function checarFidelidade(clienteId, vendaData, regras) {
+  const {
+    count
+  } = await sb.from("vendas").select("id", {
+    count: "exact",
+    head: true
+  }).eq("cliente_id", clienteId);
+  const marcos = {
+    3: "fidelidade_3_compras",
+    5: "fidelidade_5_compras"
+  };
+  const chave = marcos[count];
+  if (!chave) return;
+  const regra = regraByChave(regras, chave);
+  if (!regra) return;
+  const {
+    data: existente
+  } = await sb.from("follow_up_instancias").select("id").eq("cliente_id", clienteId).eq("regra_id", regra.id);
+  if (existente && existente.length) return;
+  await sb.from("follow_up_instancias").insert({
+    regra_id: regra.id,
+    cliente_id: clienteId,
+    venda_id: null,
+    data_prevista: vendaData,
+    status: "pendente"
+  });
+}
+
+// Roda a régua completa (follow-ups + cashback + reativação + fidelidade) para uma venda já inserida
+async function processarReguaDaVenda(venda, clienteId, regras, {
+  cashbackValor,
+  incluirWhatsapp,
+  dataRecebimento
+} = {}) {
+  await gerarFollowUpsDaVenda(venda, clienteId, regras, incluirWhatsapp, dataRecebimento);
+  await gerenciarCashback(venda, clienteId, cashbackValor);
+  await resetarReativacao(clienteId, venda.data_venda, regras);
+  await checarFidelidade(clienteId, venda.data_venda, regras);
+  await cancelarFollowUpsCadastro(clienteId, regras); // 1ª compra encerra a régua de conversão
+}
 function VendaForm({
   onSaved
 }) {
@@ -367,83 +699,6 @@ function VendaForm({
       setRegras(reg || []);
     })();
   }, []);
-  const regraByChave = chave => regras.find(r => r.chave === chave);
-  async function gerarFollowUpsDaVenda(venda, clienteId) {
-    const inserts = [];
-    for (const chave of REGRAS_POR_VENDA) {
-      if (chave === "confirmacao_whatsapp" && !form.incluir_whatsapp) continue;
-      const regra = regraByChave(chave);
-      if (!regra) continue;
-      const base = chave === "feedback_pos_compra" ? form.data_recebimento || venda.data_venda : venda.data_venda;
-      inserts.push({
-        regra_id: regra.id,
-        cliente_id: clienteId,
-        venda_id: venda.id,
-        data_prevista: addDays(base, OFFSETS[chave]),
-        status: "pendente"
-      });
-    }
-    if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
-  }
-  async function gerenciarCashback(venda, clienteId) {
-    if (!form.cashback_valor) return;
-    await sb.from("cashback").insert({
-      venda_id: venda.id,
-      cliente_id: clienteId,
-      valor: parseFloat(form.cashback_valor),
-      data_liberacao: addDays(venda.data_venda, 15),
-      data_validade: addDays(venda.data_venda, 55),
-      status: "pendente"
-    });
-  }
-  async function resetarReativacao(clienteId, novaData) {
-    // Cancela reativações pendentes antigas
-    const regraIds = regras.filter(r => REATIVACAO_CHAVES.includes(r.chave)).map(r => r.id);
-    if (regraIds.length) {
-      await sb.from("follow_up_instancias").update({
-        status: "cancelado"
-      }).eq("cliente_id", clienteId).in("regra_id", regraIds).eq("status", "pendente");
-    }
-    // Gera novas a partir da nova compra
-    const inserts = REATIVACAO_CHAVES.map(chave => {
-      const regra = regraByChave(chave);
-      return regra ? {
-        regra_id: regra.id,
-        cliente_id: clienteId,
-        venda_id: null,
-        data_prevista: addDays(novaData, OFFSETS[chave]),
-        status: "pendente"
-      } : null;
-    }).filter(Boolean);
-    if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
-  }
-  async function checarFidelidade(clienteId, vendaData) {
-    const {
-      count
-    } = await sb.from("vendas").select("id", {
-      count: "exact",
-      head: true
-    }).eq("cliente_id", clienteId);
-    const marcos = {
-      3: "fidelidade_3_compras",
-      5: "fidelidade_5_compras"
-    };
-    const chave = marcos[count];
-    if (!chave) return;
-    const regra = regraByChave(chave);
-    if (!regra) return;
-    const {
-      data: existente
-    } = await sb.from("follow_up_instancias").select("id").eq("cliente_id", clienteId).eq("regra_id", regra.id);
-    if (existente && existente.length) return; // já gerado antes
-    await sb.from("follow_up_instancias").insert({
-      regra_id: regra.id,
-      cliente_id: clienteId,
-      venda_id: null,
-      data_prevista: vendaData,
-      status: "pendente"
-    });
-  }
   async function submit(e) {
     e.preventDefault();
     setErr("");
@@ -460,10 +715,11 @@ function VendaForm({
         data_recebimento: form.data_recebimento || null
       }).select().single();
       if (error) throw error;
-      await gerarFollowUpsDaVenda(venda, form.cliente_id);
-      await gerenciarCashback(venda, form.cliente_id);
-      await resetarReativacao(form.cliente_id, form.data_venda);
-      await checarFidelidade(form.cliente_id, form.data_venda);
+      await processarReguaDaVenda(venda, form.cliente_id, regras, {
+        cashbackValor: form.cashback_valor,
+        incluirWhatsapp: form.incluir_whatsapp,
+        dataRecebimento: form.data_recebimento
+      });
       onSaved();
       setForm({
         cliente_id: "",
@@ -573,29 +829,619 @@ function VendaForm({
     disabled: saving
   }, saving ? "Salvando..." : "Registrar venda")));
 }
+
+// ============ EDITAR VENDA (campos básicos, sem regerar follow-ups) ============
+function VendaEditForm({
+  venda,
+  onCancel,
+  onSaved
+}) {
+  const [canais, setCanais] = useState([]);
+  const [form, setForm] = useState({
+    canal_id: venda.canal_id,
+    valor: venda.valor,
+    data_venda: venda.data_venda,
+    data_recebimento: venda.data_recebimento || ""
+  });
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    sb.from("canais").select("id,nome").then(({
+      data
+    }) => setCanais(data || []));
+  }, []);
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    const {
+      error
+    } = await sb.from("vendas").update({
+      canal_id: form.canal_id,
+      valor: parseFloat(form.valor),
+      data_venda: form.data_venda,
+      data_recebimento: form.data_recebimento || null
+    }).eq("id", venda.id);
+    setSaving(false);
+    if (!error) onSaved();
+  }
+  return /*#__PURE__*/React.createElement("form", {
+    className: "card",
+    onSubmit: submit
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "muted",
+    style: {
+      marginBottom: 8
+    }
+  }, "Editando venda de ", venda.clientes?.nome, " — atenção: alterar a data não recalcula follow-ups já gerados."), /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Canal"), /*#__PURE__*/React.createElement("select", {
+    value: form.canal_id,
+    onChange: e => setForm({
+      ...form,
+      canal_id: e.target.value
+    })
+  }, canais.map(c => /*#__PURE__*/React.createElement("option", {
+    key: c.id,
+    value: c.id
+  }, c.nome)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Valor (R$)"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    step: "0.01",
+    value: form.valor,
+    onChange: e => setForm({
+      ...form,
+      valor: e.target.value
+    })
+  }))), /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Data da venda"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: form.data_venda,
+    onChange: e => setForm({
+      ...form,
+      data_venda: e.target.value
+    })
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Data de recebimento"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: form.data_recebimento,
+    onChange: e => setForm({
+      ...form,
+      data_recebimento: e.target.value
+    })
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 12,
+      display: "flex",
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "submit",
+    disabled: saving
+  }, saving ? "Salvando..." : "Salvar alterações"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "secondary",
+    onClick: onCancel
+  }, "Cancelar")));
+}
+
+// ============ IMPORTAR CSV — VENDAS ============
+function ImportVendasModal({
+  onClose,
+  onDone
+}) {
+  const [rows, setRows] = useState(null);
+  const [headers, setHeaders] = useState([]);
+  const [map, setMap] = useState({
+    cliente_nome: "",
+    canal_nome: "",
+    valor: "",
+    data_venda: ""
+  });
+  const [status, setStatus] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [gerarFollowUps, setGerarFollowUps] = useState(true);
+  function onFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    window.Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: res => {
+        setRows(res.data);
+        setHeaders(res.meta.fields || []);
+      }
+    });
+  }
+  async function importar() {
+    if (!rows || !map.cliente_nome || !map.valor || !map.data_venda) {
+      setStatus("Associe pelo menos: nome do cliente, valor e data da venda.");
+      return;
+    }
+    setImporting(true);
+    const {
+      data: clientesExistentes
+    } = await sb.from("clientes").select("id,nome");
+    const {
+      data: canaisExistentes
+    } = await sb.from("canais").select("id,nome");
+    const {
+      data: regras
+    } = await sb.from("follow_up_regras").select("*").eq("ativo", true);
+    const clienteMap = {};
+    (clientesExistentes || []).forEach(c => clienteMap[c.nome.trim().toLowerCase()] = c.id);
+    const canalMap = {};
+    (canaisExistentes || []).forEach(c => canalMap[c.nome.trim().toLowerCase()] = c.id);
+    let ok = 0,
+      fail = 0,
+      clientesCriados = 0;
+    for (const row of rows) {
+      const nomeCliente = (row[map.cliente_nome] || "").trim();
+      if (!nomeCliente) continue;
+      let clienteId = clienteMap[nomeCliente.toLowerCase()];
+      if (!clienteId) {
+        const {
+          data: novo,
+          error: errCli
+        } = await sb.from("clientes").insert({
+          nome: nomeCliente
+        }).select().single();
+        if (errCli) {
+          fail++;
+          continue;
+        }
+        clienteId = novo.id;
+        clienteMap[nomeCliente.toLowerCase()] = clienteId;
+        clientesCriados++;
+      }
+      let canalId = null;
+      if (map.canal_nome) {
+        const nomeCanal = (row[map.canal_nome] || "").trim();
+        canalId = canalMap[nomeCanal.toLowerCase()];
+      }
+      if (!canalId) canalId = Object.values(canalMap)[0]; // fallback: primeiro canal existente
+      const valor = parseFloat((row[map.valor] || "0").toString().replace(",", "."));
+      const dataVenda = (row[map.data_venda] || "").trim();
+      if (!valor || !dataVenda || !canalId) {
+        fail++;
+        continue;
+      }
+      const {
+        data: venda,
+        error
+      } = await sb.from("vendas").insert({
+        cliente_id: clienteId,
+        canal_id: canalId,
+        valor,
+        data_venda: dataVenda
+      }).select().single();
+      if (error) {
+        fail++;
+        continue;
+      }
+      ok++;
+      await cancelarFollowUpsCadastro(clienteId, regras);
+      if (gerarFollowUps) {
+        await processarReguaDaVenda(venda, clienteId, regras, {});
+      }
+    }
+    setImporting(false);
+    setStatus(`Importação concluída: ${ok} venda(s) importada(s), ${clientesCriados} cliente(s) novo(s) criado(s), ${fail} erro(s).` + (gerarFollowUps ? " Follow-ups gerados para essas vendas." : " Follow-ups não foram gerados."));
+    onDone();
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      alignItems: "center"
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "Importar vendas (CSV)")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    onClick: onClose
+  }, "Fechar"))), /*#__PURE__*/React.createElement("div", {
+    className: "muted",
+    style: {
+      marginTop: 4
+    }
+  }, "Clientes que não existirem ainda serão criados automaticamente pelo nome."), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    style: {
+      width: "auto"
+    },
+    checked: gerarFollowUps,
+    onChange: e => setGerarFollowUps(e.target.checked)
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "muted"
+  }, "Gerar follow-ups (cashback, feedback, reativação...) para essas vendas — recomendado só para poucas vendas recentes, não para importações grandes de histórico antigo")), /*#__PURE__*/React.createElement("label", {
+    style: {
+      marginTop: 12
+    }
+  }, "Arquivo CSV (exportado do app de vendas)"), /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: ".csv",
+    onChange: onFile
+  }), headers.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "muted",
+    style: {
+      marginTop: 12
+    }
+  }, rows.length, " linha(s) encontrada(s). Associe as colunas:"), [["cliente_nome", "Nome do cliente *"], ["canal_nome", "Canal"], ["valor", "Valor *"], ["data_venda", "Data da venda *"]].map(([campo, label]) => /*#__PURE__*/React.createElement("div", {
+    key: campo,
+    className: "row",
+    style: {
+      marginTop: 8,
+      alignItems: "center"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "muted",
+    style: {
+      flex: "0 0 160px"
+    }
+  }, label), /*#__PURE__*/React.createElement("select", {
+    value: map[campo],
+    onChange: e => setMap({
+      ...map,
+      [campo]: e.target.value
+    })
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "— não importar —"), headers.map(h => /*#__PURE__*/React.createElement("option", {
+    key: h,
+    value: h
+  }, h))))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 16
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: importar,
+    disabled: importing
+  }, importing ? "Importando..." : "Importar"))), status && /*#__PURE__*/React.createElement("div", {
+    className: "muted",
+    style: {
+      marginTop: 12
+    }
+  }, status));
+}
+
+// ============ IMPORTAR DIRETO DO BAGY (clientes + pedidos) ============
+function parseCsvFile(file) {
+  return new Promise(resolve => {
+    window.Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: res => resolve(res.data)
+    });
+  });
+}
+function ImportBagyModal({
+  onClose,
+  onDone
+}) {
+  const [arqClientes, setArqClientes] = useState(null);
+  const [arqPedidos, setArqPedidos] = useState(null);
+  const [gerarFollowUps, setGerarFollowUps] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [log, setLog] = useState([]);
+  function addLog(msg) {
+    setLog(l => [...l, msg]);
+  }
+  async function importar() {
+    if (!arqPedidos) {
+      addLog("Selecione ao menos o arquivo de pedidos.");
+      return;
+    }
+    setImporting(true);
+    setLog([]);
+
+    // canal Bagy
+    let {
+      data: canalBagy
+    } = await sb.from("canais").select("id").eq("nome", "Bagy").maybeSingle();
+    if (!canalBagy) {
+      const {
+        data: novoCanal
+      } = await sb.from("canais").insert({
+        nome: "Bagy",
+        tipo: "online"
+      }).select().single();
+      canalBagy = novoCanal;
+    }
+
+    // clientes existentes (para matching por e-mail/telefone)
+    const {
+      data: clientesDb
+    } = await sb.from("clientes").select("id,nome,email,telefone,data_nascimento");
+    const porEmail = {},
+      porTelefone = {};
+    (clientesDb || []).forEach(c => {
+      if (c.email) porEmail[c.email.trim().toLowerCase()] = c;
+      if (c.telefone) porTelefone[c.telefone.replace(/\D/g, "")] = c;
+    });
+
+    // 1) importar/atualizar clientes do CSV de clientes, se fornecido
+    if (arqClientes) {
+      const {
+        data: regrasCadastro
+      } = await sb.from("follow_up_regras").select("*").eq("ativo", true);
+      const rows = await parseCsvFile(arqClientes);
+      let novos = 0,
+        existentes = 0;
+      for (const row of rows) {
+        const email = (row["Email"] || "").trim().toLowerCase();
+        const nome = (row["Name"] || "").trim();
+        const telefone = (row["Phone"] || "").trim();
+        if (!nome) continue;
+        const jaExiste = email ? porEmail[email] : telefone ? porTelefone[telefone.replace(/\D/g, "")] : null;
+        if (jaExiste) {
+          existentes++;
+          continue;
+        }
+        const {
+          data: novo
+        } = await sb.from("clientes").insert({
+          nome,
+          email: email || null,
+          telefone: telefone || null
+        }).select().single();
+        if (novo) {
+          novos++;
+          if (novo.email) porEmail[novo.email.toLowerCase()] = novo;
+          if (novo.telefone) porTelefone[novo.telefone.replace(/\D/g, "")] = novo;
+          // Cliente cadastrado sem compra (nesse arquivo) entra na régua de conversão —
+          // se ele também aparecer no arquivo de pedidos, a régua é cancelada automaticamente na etapa seguinte.
+          await gerarFollowUpsCadastro(novo, regrasCadastro || []);
+        }
+      }
+      addLog(`Clientes: ${novos} novo(s), ${existentes} já existiam.`);
+    }
+
+    // 2) importar pedidos (agrupando linhas por pedido)
+    const rowsPedidos = await parseCsvFile(arqPedidos);
+    const pedidos = {};
+    for (const row of rowsPedidos) {
+      const id = row["id"];
+      if (!id) continue;
+      if (!pedidos[id]) pedidos[id] = row; // usa a primeira linha do pedido (dados repetem por item)
+    }
+    const idsPedidos = Object.keys(pedidos);
+    const {
+      data: jaImportados
+    } = await sb.from("vendas").select("bagy_pedido_id").not("bagy_pedido_id", "is", null);
+    const setJaImportados = new Set((jaImportados || []).map(v => v.bagy_pedido_id));
+    const {
+      data: regras
+    } = await sb.from("follow_up_regras").select("*").eq("ativo", true);
+    let criadas = 0,
+      puladas = 0,
+      canceladas = 0,
+      clientesCriados = 0,
+      aniversariosPreenchidos = 0;
+    for (const pedidoId of idsPedidos) {
+      const row = pedidos[pedidoId];
+      if (row["canceled_at"]) {
+        canceladas++;
+        continue;
+      }
+      if (setJaImportados.has(pedidoId)) {
+        puladas++;
+        continue;
+      }
+      const email = (row["customers__via__customer_id__email"] || "").trim().toLowerCase();
+      const telefoneRaw = (row["customers__via__customer_id__phone"] || "").trim();
+      const nome = (row["customers__via__customer_id__name"] || "").trim();
+      const nascimento = (row["customers__via__customer_id__birthday"] || "").slice(0, 10) || null;
+      let cliente = email ? porEmail[email] : telefoneRaw ? porTelefone[telefoneRaw.replace(/\D/g, "")] : null;
+      if (!cliente && nome) {
+        const {
+          data: novo
+        } = await sb.from("clientes").insert({
+          nome,
+          email: email || null,
+          telefone: telefoneRaw || null,
+          data_nascimento: nascimento
+        }).select().single();
+        if (novo) {
+          cliente = novo;
+          clientesCriados++;
+          if (novo.email) porEmail[novo.email.toLowerCase()] = novo;
+          if (novo.telefone) porTelefone[novo.telefone.replace(/\D/g, "")] = novo;
+        }
+      } else if (cliente && nascimento && !cliente.data_nascimento) {
+        await sb.from("clientes").update({
+          data_nascimento: nascimento
+        }).eq("id", cliente.id);
+        cliente.data_nascimento = nascimento;
+        aniversariosPreenchidos++;
+      }
+      if (!cliente) {
+        puladas++;
+        continue;
+      }
+      const valor = parseFloat(row["total"] || "0");
+      const dataVenda = (row["created_at"] || "").slice(0, 10);
+      if (!valor || !dataVenda) {
+        puladas++;
+        continue;
+      }
+      const {
+        data: venda,
+        error
+      } = await sb.from("vendas").insert({
+        cliente_id: cliente.id,
+        canal_id: canalBagy.id,
+        valor,
+        data_venda: dataVenda,
+        bagy_pedido_id: pedidoId
+      }).select().single();
+      if (error) {
+        puladas++;
+        continue;
+      }
+      criadas++;
+      await cancelarFollowUpsCadastro(cliente.id, regras); // encerra a régua de conversão se ele veio dela
+      if (gerarFollowUps) await processarReguaDaVenda(venda, cliente.id, regras, {});
+    }
+    addLog(`Pedidos: ${criadas} venda(s) nova(s) criada(s), ${puladas} pulada(s) (já importadas ou incompletas), ${canceladas} cancelada(s) ignorada(s), ${clientesCriados} cliente(s) novo(s) via pedidos, ${aniversariosPreenchidos} aniversário(s) preenchido(s).`);
+    setImporting(false);
+    onDone();
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    className: "card"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row",
+    style: {
+      alignItems: "center"
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "Importar do Bagy")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: "right"
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    onClick: onClose
+  }, "Fechar"))), /*#__PURE__*/React.createElement("div", {
+    className: "muted",
+    style: {
+      marginTop: 4
+    }
+  }, "Reconhece pedidos já importados pelo número do pedido — pode reimportar a mesma exportação (ex: \"últimos 7 dias\") toda semana sem duplicar vendas."), /*#__PURE__*/React.createElement("label", {
+    style: {
+      marginTop: 14
+    }
+  }, "CSV de clientes (opcional — traz quem se cadastrou sem comprar)"), /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: ".csv",
+    onChange: e => setArqClientes(e.target.files[0] || null)
+  }), /*#__PURE__*/React.createElement("label", {
+    style: {
+      marginTop: 14
+    }
+  }, "CSV de pedidos *"), /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: ".csv",
+    onChange: e => setArqPedidos(e.target.files[0] || null)
+  }), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      marginTop: 14
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    style: {
+      width: "auto"
+    },
+    checked: gerarFollowUps,
+    onChange: e => setGerarFollowUps(e.target.checked)
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "muted"
+  }, "Gerar follow-ups para os pedidos importados — deixe desmarcado na importação inicial de 12 meses; marque nas importações semanais dos últimos 7 dias")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 16
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: importar,
+    disabled: importing || !arqPedidos
+  }, importing ? "Importando..." : "Importar")), log.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 12
+    }
+  }, log.map((l, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "muted"
+  }, l))));
+}
 function VendasTab() {
   const [vendas, setVendas] = useState([]);
-  const [showForm, setShowForm] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [showImportBagy, setShowImportBagy] = useState(false);
+  const [editing, setEditing] = useState(null);
   const load = useCallback(async () => {
     const {
       data
     } = await sb.from("vendas").select("*, clientes(nome), canais(nome)").order("data_venda", {
       ascending: false
-    }).limit(30);
+    }).limit(50);
     setVendas(data || []);
   }, []);
   useEffect(() => {
     load();
   }, [load]);
+  async function excluir(v) {
+    if (!window.confirm(`Excluir essa venda de ${v.clientes?.nome || "cliente"}? Isso também remove o cashback e follow-ups ligados a ela.`)) return;
+    await sb.from("follow_up_instancias").delete().eq("venda_id", v.id);
+    await sb.from("cashback").delete().eq("venda_id", v.id);
+    const {
+      error
+    } = await sb.from("vendas").delete().eq("id", v.id);
+    if (error) window.alert("Não foi possível excluir a venda: " + error.message);
+    load();
+  }
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "toolbar"
   }, /*#__PURE__*/React.createElement("div", {
     className: "muted"
-  }, "Últimas vendas"), /*#__PURE__*/React.createElement("button", {
+  }, "Últimas vendas"), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
     className: "secondary",
-    onClick: () => setShowForm(s => !s)
-  }, showForm ? "Ocultar formulário" : "+ Nova venda")), showForm && /*#__PURE__*/React.createElement(VendaForm, {
-    onSaved: load
+    style: {
+      marginRight: 8
+    },
+    onClick: () => {
+      setShowImportBagy(s => !s);
+      setShowImport(false);
+      setShowForm(false);
+      setEditing(null);
+    }
+  }, showImportBagy ? "Cancelar" : "Importar do Bagy"), /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    style: {
+      marginRight: 8
+    },
+    onClick: () => {
+      setShowImport(s => !s);
+      setShowImportBagy(false);
+      setShowForm(false);
+      setEditing(null);
+    }
+  }, showImport ? "Cancelar" : "Importar CSV genérico"), /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    onClick: () => {
+      setShowForm(s => !s);
+      setShowImport(false);
+      setShowImportBagy(false);
+      setEditing(null);
+    }
+  }, showForm ? "Ocultar formulário" : "+ Nova venda"))), showImportBagy && /*#__PURE__*/React.createElement(ImportBagyModal, {
+    onClose: () => setShowImportBagy(false),
+    onDone: load
+  }), showImport && /*#__PURE__*/React.createElement(ImportVendasModal, {
+    onClose: () => setShowImport(false),
+    onDone: load
+  }), showForm && /*#__PURE__*/React.createElement(VendaForm, {
+    onSaved: () => {
+      setShowForm(false);
+      load();
+    }
+  }), editing && /*#__PURE__*/React.createElement(VendaEditForm, {
+    venda: editing,
+    onCancel: () => setEditing(null),
+    onSaved: () => {
+      setEditing(null);
+      load();
+    }
   }), /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
@@ -603,25 +1449,48 @@ function VendasTab() {
     }
   }, vendas.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "empty"
-  }, "Nenhuma venda registrada ainda.") : /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Cliente"), /*#__PURE__*/React.createElement("th", null, "Canal"), /*#__PURE__*/React.createElement("th", null, "Valor"), /*#__PURE__*/React.createElement("th", null, "Data"))), /*#__PURE__*/React.createElement("tbody", null, vendas.map(v => /*#__PURE__*/React.createElement("tr", {
+  }, "Nenhuma venda registrada ainda.") : /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Cliente"), /*#__PURE__*/React.createElement("th", null, "Canal"), /*#__PURE__*/React.createElement("th", null, "Valor"), /*#__PURE__*/React.createElement("th", null, "Data"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, vendas.map(v => /*#__PURE__*/React.createElement("tr", {
     key: v.id
   }, /*#__PURE__*/React.createElement("td", null, v.clientes?.nome || "—"), /*#__PURE__*/React.createElement("td", {
     className: "muted"
   }, v.canais?.nome || "—"), /*#__PURE__*/React.createElement("td", null, "R$ ", Number(v.valor).toFixed(2)), /*#__PURE__*/React.createElement("td", {
     className: "muted"
-  }, fmt(v.data_venda))))))));
+  }, fmt(v.data_venda)), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    style: {
+      marginRight: 6
+    },
+    onClick: () => {
+      setEditing(v);
+      setShowForm(false);
+      setShowImport(false);
+      setShowImportBagy(false);
+    }
+  }, "Editar"), /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    onClick: () => excluir(v)
+  }, "Excluir"))))))));
 }
 
 // ============ FOLLOW-UPS TAB ============
+function fimDaSemana() {
+  // Fim da semana = próximo domingo (ou hoje, se hoje já for domingo)
+  const hoje = new Date();
+  const diff = (7 - hoje.getDay()) % 7;
+  const dom = new Date(hoje);
+  dom.setDate(hoje.getDate() + diff);
+  return dom.toISOString().slice(0, 10);
+}
 function FollowUpsTab() {
   const [items, setItems] = useState([]);
-  const [filtro, setFiltro] = useState("pendente");
+  const [filtro, setFiltro] = useState("todos"); // atrasados | hoje | semana | todos
+
   const load = useCallback(async () => {
     const {
       data
     } = await sb.from("follow_up_instancias").select("*, clientes(nome, telefone), follow_up_regras(descricao, chave)").eq("status", "pendente").order("data_prevista", {
       ascending: true
-    }).limit(100);
+    }).limit(200);
     setItems(data || []);
   }, []);
   useEffect(() => {
@@ -634,20 +1503,36 @@ function FollowUpsTab() {
     }).eq("id", id);
     load();
   }
-  const list = items; // já filtrado por pendente na query
-
+  const hojeStr = today();
+  const fimSemana = fimDaSemana();
+  const list = items.filter(f => {
+    if (filtro === "atrasados") return f.data_prevista < hojeStr;
+    if (filtro === "hoje") return f.data_prevista === hojeStr;
+    if (filtro === "semana") return f.data_prevista >= hojeStr && f.data_prevista <= fimSemana;
+    return true; // todos
+  });
+  const FILTROS = [["atrasados", "Atrasados"], ["hoje", "Hoje"], ["semana", "Essa semana"], ["todos", "Todos pendentes"]];
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     className: "toolbar"
   }, /*#__PURE__*/React.createElement("div", {
     className: "muted"
-  }, list.length, " follow-up(s) pendente(s)")), /*#__PURE__*/React.createElement("div", {
+  }, list.length, " follow-up(s)")), /*#__PURE__*/React.createElement("div", {
+    className: "tabs",
+    style: {
+      marginBottom: 16
+    }
+  }, FILTROS.map(([key, label]) => /*#__PURE__*/React.createElement("div", {
+    key: key,
+    className: "tab " + (filtro === key ? "active" : ""),
+    onClick: () => setFiltro(key)
+  }, label))), /*#__PURE__*/React.createElement("div", {
     className: "card",
     style: {
       padding: 0
     }
   }, list.length === 0 ? /*#__PURE__*/React.createElement("div", {
     className: "empty"
-  }, "Nenhum follow-up pendente no momento.") : /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Cliente"), /*#__PURE__*/React.createElement("th", null, "Ação"), /*#__PURE__*/React.createElement("th", null, "Data prevista"), /*#__PURE__*/React.createElement("th", null, "Status"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, list.map(f => {
+  }, "Nenhum follow-up nesse filtro.") : /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Cliente"), /*#__PURE__*/React.createElement("th", null, "Ação"), /*#__PURE__*/React.createElement("th", null, "Data prevista"), /*#__PURE__*/React.createElement("th", null, "Status"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, list.map(f => {
     const atrasado = f.data_prevista < today();
     return /*#__PURE__*/React.createElement("tr", {
       key: f.id
