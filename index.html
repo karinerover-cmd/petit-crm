@@ -839,10 +839,11 @@ const OFFSETS_CADASTRO = {
   cadastro_oferta_troca: 45,
   cadastro_reclassificacao: 67
 };
-const LEAD_CHAVES = ["lead_reconhecimento", "lead_contato_valor", "lead_oferta_boasvindas", "lead_reforco_storytelling", "lead_reclassificacao"];
+const LEAD_CHAVES = ["lead_reconhecimento", "lead_contato_valor", "lead_convite_petit_lovers", "lead_oferta_boasvindas", "lead_reforco_storytelling", "lead_reclassificacao"];
 const OFFSETS_LEAD = {
-  lead_reconhecimento: 1,
+  lead_reconhecimento: 0,
   lead_contato_valor: 5,
+  lead_convite_petit_lovers: 5,
   lead_oferta_boasvindas: 9,
   lead_reforco_storytelling: 19,
   lead_reclassificacao: 30
@@ -1859,16 +1860,26 @@ function fimDaSemana() {
 function FollowUpsTab() {
   const [items, setItems] = useState([]);
   const [filtro, setFiltro] = useState("todos"); // atrasados | hoje | semana | todos
-
+  const [copiadoId, setCopiadoId] = useState(null);
+  async function copiarMensagem(f, nome) {
+    const texto = (f.follow_up_regras?.mensagem_modelo || "").replace(/\[Nome\]/g, nome || "");
+    try {
+      await navigator.clipboard.writeText(texto);
+      setCopiadoId(f.id);
+      setTimeout(() => setCopiadoId(id => id === f.id ? null : id), 2000);
+    } catch (e) {
+      console.error("[copiar] erro:", e);
+    }
+  }
   const load = useCallback(async () => {
     await garantirAniversariosDoMes();
     const [{
       data: deClientes
     }, {
       data: deLeads
-    }] = await Promise.all([sb.from("follow_up_instancias").select("*, clientes(nome, telefone), follow_up_regras(descricao, chave)").eq("status", "pendente").not("cliente_id", "is", null).order("data_prevista", {
+    }] = await Promise.all([sb.from("follow_up_instancias").select("*, clientes(nome, telefone), follow_up_regras(descricao, chave, mensagem_modelo)").eq("status", "pendente").not("cliente_id", "is", null).order("data_prevista", {
       ascending: true
-    }).limit(200), sb.from("follow_up_instancias").select("*, leads(nome, instagram_handle), follow_up_regras(descricao, chave)").eq("status", "pendente").not("lead_id", "is", null).order("data_prevista", {
+    }).limit(200), sb.from("follow_up_instancias").select("*, leads(nome, instagram_handle), follow_up_regras(descricao, chave, mensagem_modelo)").eq("status", "pendente").not("lead_id", "is", null).order("data_prevista", {
       ascending: true
     }).limit(200)]);
     const combinados = [...(deClientes || []), ...(deLeads || [])].sort((a, b) => a.data_prevista < b.data_prevista ? -1 : 1);
@@ -1924,7 +1935,23 @@ function FollowUpsTab() {
       className: "muted"
     }, origem, contato ? " · " + contato : "")), /*#__PURE__*/React.createElement("td", null, f.follow_up_regras?.descricao, f.observacao && /*#__PURE__*/React.createElement("div", {
       className: "muted"
-    }, f.observacao)), /*#__PURE__*/React.createElement("td", {
+    }, f.observacao), f.follow_up_regras?.mensagem_modelo && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 6,
+        padding: 8,
+        background: "#F5EFE6",
+        borderRadius: 6,
+        fontSize: 13
+      }
+    }, f.follow_up_regras.mensagem_modelo.replace(/\[Nome\]/g, nome || ""), /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 6
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      className: "secondary",
+      onClick: () => copiarMensagem(f, nome)
+    }, copiadoId === f.id ? "Copiado ✓" : "Copiar mensagem")))), /*#__PURE__*/React.createElement("td", {
       className: "muted"
     }, fmt(f.data_prevista)), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
       className: "pill " + (atrasado ? "atrasado" : "pendente")
