@@ -141,34 +141,67 @@ function ultimoDiaDoMes(ano, mes) {
 // Garante que todo cliente aniversariante do mês atual tem um lembrete gerado
 // (roda toda vez que o painel de Follow-ups é aberto — não depende de cron)
 async function garantirAniversariosDoMes() {
-  const {
-    data: regra
-  } = await sb.from("follow_up_regras").select("*").eq("chave", "aniversario_cupom").maybeSingle();
-  if (!regra) return;
-  const agora = new Date();
-  const ano = agora.getFullYear();
-  const mes = agora.getMonth() + 1; // 1-12
-  const dataPrevista = `${ano}-${pad2(mes)}-01`;
-  const validade = `${ano}-${pad2(mes)}-${pad2(ultimoDiaDoMes(ano, mes))}`;
-  const prefixoAno = `${ano}-${pad2(mes)}`;
-  const {
-    data: clientesAniversariantes
-  } = await sb.from("clientes").select("id,nome,data_nascimento").not("data_nascimento", "is", null);
-  const doMes = (clientesAniversariantes || []).filter(c => c.data_nascimento && c.data_nascimento.slice(5, 7) === pad2(mes));
-  if (!doMes.length) return;
-  const {
-    data: jaGerados
-  } = await sb.from("follow_up_instancias").select("cliente_id").eq("regra_id", regra.id).gte("data_prevista", `${prefixoAno}-01`).lte("data_prevista", `${prefixoAno}-31`);
-  const setJaGerados = new Set((jaGerados || []).map(f => f.cliente_id));
-  const inserts = doMes.filter(c => !setJaGerados.has(c.id)).map(c => ({
-    regra_id: regra.id,
-    cliente_id: c.id,
-    venda_id: null,
-    data_prevista: dataPrevista,
-    status: "pendente",
-    observacao: `Cupom de aniversário válido até ${fmt(validade)}`
-  }));
-  if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
+  try {
+    const {
+      data: regra,
+      error: errRegra
+    } = await sb.from("follow_up_regras").select("*").eq("chave", "aniversario_cupom").maybeSingle();
+    if (errRegra) {
+      console.error("[aniversario] erro ao buscar regra:", errRegra);
+      return;
+    }
+    if (!regra) {
+      console.warn("[aniversario] regra 'aniversario_cupom' não encontrada na tabela follow_up_regras");
+      return;
+    }
+    const agora = new Date();
+    const ano = agora.getFullYear();
+    const mes = agora.getMonth() + 1; // 1-12
+    const dataPrevista = `${ano}-${pad2(mes)}-01`;
+    const validade = `${ano}-${pad2(mes)}-${pad2(ultimoDiaDoMes(ano, mes))}`;
+    const prefixoAno = `${ano}-${pad2(mes)}`;
+    const {
+      data: clientesAniversariantes,
+      error: errClientes
+    } = await sb.from("clientes").select("id,nome,data_nascimento").not("data_nascimento", "is", null);
+    if (errClientes) {
+      console.error("[aniversario] erro ao buscar clientes:", errClientes);
+      return;
+    }
+    console.log("[aniversario] clientes com data de nascimento preenchida:", (clientesAniversariantes || []).length);
+    const doMes = (clientesAniversariantes || []).filter(c => c.data_nascimento && c.data_nascimento.slice(5, 7) === pad2(mes));
+    console.log(`[aniversario] mês atual: ${mes} — aniversariantes encontrados:`, doMes.length, doMes.map(c => c.nome));
+    if (!doMes.length) return;
+    const {
+      data: jaGerados,
+      error: errGerados
+    } = await sb.from("follow_up_instancias").select("cliente_id").eq("regra_id", regra.id).gte("data_prevista", `${prefixoAno}-01`).lte("data_prevista", `${prefixoAno}-31`);
+    if (errGerados) {
+      console.error("[aniversario] erro ao checar já gerados:", errGerados);
+      return;
+    }
+    const setJaGerados = new Set((jaGerados || []).map(f => f.cliente_id));
+    const inserts = doMes.filter(c => !setJaGerados.has(c.id)).map(c => ({
+      regra_id: regra.id,
+      cliente_id: c.id,
+      venda_id: null,
+      data_prevista: dataPrevista,
+      status: "pendente",
+      observacao: `Cupom de aniversário válido até ${fmt(validade)}`
+    }));
+    console.log("[aniversario] novos lembretes a inserir:", inserts.length);
+    if (inserts.length) {
+      const {
+        error: errInsert
+      } = await sb.from("follow_up_instancias").upsert(inserts, {
+        onConflict: "cliente_id,regra_id,data_prevista",
+        ignoreDuplicates: true
+      });
+      if (errInsert) console.error("[aniversario] erro ao inserir lembretes:", errInsert);
+    }
+  } catch (e) {
+    console.error("[aniversario] erro inesperado:", e);
+  }
 }
 
 // ============ LOGIN ============
@@ -746,7 +779,10 @@ async function gerarFollowUpsLead(lead, regras) {
       status: "pendente"
     } : null;
   }).filter(Boolean);
-  if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
+  if (inserts.length) await sb.from("follow_up_instancias").upsert(inserts, {
+    onConflict: "lead_id,regra_id,data_prevista",
+    ignoreDuplicates: true
+  });
 }
 async function cancelarFollowUpsLead(leadId, regras) {
   const regraIds = regras.filter(r => LEAD_CHAVES.includes(r.chave)).map(r => r.id);
@@ -774,7 +810,10 @@ async function gerarFollowUpsCadastro(cliente, regras) {
       status: "pendente"
     } : null;
   }).filter(Boolean);
-  if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
+  if (inserts.length) await sb.from("follow_up_instancias").upsert(inserts, {
+    onConflict: "cliente_id,regra_id,data_prevista",
+    ignoreDuplicates: true
+  });
 }
 
 // Cancela a régua de conversão quando o cliente faz a primeira compra
@@ -800,7 +839,10 @@ async function gerarFollowUpsDaVenda(venda, clienteId, regras, incluirWhatsapp, 
       status: "pendente"
     });
   }
-  if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
+  if (inserts.length) await sb.from("follow_up_instancias").upsert(inserts, {
+    onConflict: "venda_id,regra_id",
+    ignoreDuplicates: true
+  });
 }
 async function gerenciarCashback(venda, clienteId, cashbackValor) {
   if (!cashbackValor) return;
@@ -830,7 +872,10 @@ async function resetarReativacao(clienteId, novaData, regras) {
       status: "pendente"
     } : null;
   }).filter(Boolean);
-  if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
+  if (inserts.length) await sb.from("follow_up_instancias").upsert(inserts, {
+    onConflict: "cliente_id,regra_id,data_prevista",
+    ignoreDuplicates: true
+  });
 }
 async function checarFidelidade(clienteId, vendaData, regras) {
   const {
@@ -851,12 +896,15 @@ async function checarFidelidade(clienteId, vendaData, regras) {
     data: existente
   } = await sb.from("follow_up_instancias").select("id").eq("cliente_id", clienteId).eq("regra_id", regra.id);
   if (existente && existente.length) return;
-  await sb.from("follow_up_instancias").insert({
+  await sb.from("follow_up_instancias").upsert({
     regra_id: regra.id,
     cliente_id: clienteId,
     venda_id: null,
     data_prevista: vendaData,
     status: "pendente"
+  }, {
+    onConflict: "cliente_id,regra_id,data_prevista",
+    ignoreDuplicates: true
   });
 }
 
