@@ -137,9 +137,19 @@ function pad2(n) {
 function ultimoDiaDoMes(ano, mes) {
   return new Date(ano, mes, 0).getDate();
 } // mes: 1-12
+function dedupeKey({
+  venda_id,
+  cliente_id,
+  lead_id,
+  regra_id,
+  data_prevista
+}) {
+  return [venda_id || "-", cliente_id || "-", lead_id || "-", regra_id, data_prevista || "-"].join("|");
+}
 
 // Garante que todo cliente aniversariante do mês atual tem um lembrete gerado
-// (roda toda vez que o painel de Follow-ups é aberto — não depende de cron)
+// (roda toda vez que o painel de Follow-ups é aberto — não depende de cron;
+// a trava de duplicidade fica por conta do banco, via dedupe_key)
 async function garantirAniversariosDoMes() {
   try {
     const {
@@ -159,7 +169,6 @@ async function garantirAniversariosDoMes() {
     const mes = agora.getMonth() + 1; // 1-12
     const dataPrevista = `${ano}-${pad2(mes)}-01`;
     const validade = `${ano}-${pad2(mes)}-${pad2(ultimoDiaDoMes(ano, mes))}`;
-    const prefixoAno = `${ano}-${pad2(mes)}`;
     const {
       data: clientesAniversariantes,
       error: errClientes
@@ -168,37 +177,29 @@ async function garantirAniversariosDoMes() {
       console.error("[aniversario] erro ao buscar clientes:", errClientes);
       return;
     }
-    console.log("[aniversario] clientes com data de nascimento preenchida:", (clientesAniversariantes || []).length);
     const doMes = (clientesAniversariantes || []).filter(c => c.data_nascimento && c.data_nascimento.slice(5, 7) === pad2(mes));
     console.log(`[aniversario] mês atual: ${mes} — aniversariantes encontrados:`, doMes.length, doMes.map(c => c.nome));
     if (!doMes.length) return;
-    const {
-      data: jaGerados,
-      error: errGerados
-    } = await sb.from("follow_up_instancias").select("cliente_id").eq("regra_id", regra.id).gte("data_prevista", `${prefixoAno}-01`).lte("data_prevista", `${prefixoAno}-31`);
-    if (errGerados) {
-      console.error("[aniversario] erro ao checar já gerados:", errGerados);
-      return;
-    }
-    const setJaGerados = new Set((jaGerados || []).map(f => f.cliente_id));
-    const inserts = doMes.filter(c => !setJaGerados.has(c.id)).map(c => ({
+    const inserts = doMes.map(c => ({
       regra_id: regra.id,
       cliente_id: c.id,
       venda_id: null,
       data_prevista: dataPrevista,
       status: "pendente",
-      observacao: `Cupom de aniversário válido até ${fmt(validade)}`
+      observacao: `Cupom de aniversário válido até ${fmt(validade)}`,
+      dedupe_key: dedupeKey({
+        cliente_id: c.id,
+        regra_id: regra.id,
+        data_prevista: dataPrevista
+      })
     }));
-    console.log("[aniversario] novos lembretes a inserir:", inserts.length);
-    if (inserts.length) {
-      const {
-        error: errInsert
-      } = await sb.from("follow_up_instancias").upsert(inserts, {
-        onConflict: "cliente_id,regra_id,data_prevista",
-        ignoreDuplicates: true
-      });
-      if (errInsert) console.error("[aniversario] erro ao inserir lembretes:", errInsert);
-    }
+    const {
+      error: errInsert
+    } = await sb.from("follow_up_instancias").upsert(inserts, {
+      onConflict: "dedupe_key",
+      ignoreDuplicates: true
+    });
+    if (errInsert) console.error("[aniversario] erro ao inserir lembretes:", errInsert);
   } catch (e) {
     console.error("[aniversario] erro inesperado:", e);
   }
@@ -506,33 +507,38 @@ function LeadForm({
 }) {
   const [form, setForm] = useState({
     nome: "",
-    instagram_handle: ""
+    instagram_handle: "",
+    data_captura: today()
   });
   const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
   async function submit(e) {
     e.preventDefault();
+    setErr("");
     setSaving(true);
     const {
       data: lead,
       error
-    } = await sb.from("leads").insert({
-      ...form,
-      data_captura: today()
-    }).select().single();
-    if (!error) {
-      const {
-        data: regras
-      } = await sb.from("follow_up_regras").select("*").eq("ativo", true);
-      await gerarFollowUpsLead(lead, regras || []);
+    } = await sb.from("leads").insert(form).select().single();
+    if (error) {
+      console.error("[lead] erro ao criar:", error);
+      setErr("Erro ao salvar: " + error.message);
+      setSaving(false);
+      return;
     }
+    const {
+      data: regras,
+      error: errRegras
+    } = await sb.from("follow_up_regras").select("*").eq("ativo", true);
+    if (errRegras) console.error("[lead] erro ao buscar regras:", errRegras);
+    await gerarFollowUpsLead(lead, regras || []);
     setSaving(false);
-    if (!error) {
-      onSaved();
-      setForm({
-        nome: "",
-        instagram_handle: ""
-      });
-    }
+    onSaved();
+    setForm({
+      nome: "",
+      instagram_handle: "",
+      data_captura: today()
+    });
   }
   return /*#__PURE__*/React.createElement("form", {
     className: "card",
@@ -552,7 +558,16 @@ function LeadForm({
       ...form,
       instagram_handle: e.target.value
     })
-  }))), /*#__PURE__*/React.createElement("div", {
+  }))), /*#__PURE__*/React.createElement("label", null, "Data da interação (seguiu, comentou, chamou no direct...)"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: form.data_captura,
+    onChange: e => setForm({
+      ...form,
+      data_captura: e.target.value
+    })
+  }), err && /*#__PURE__*/React.createElement("div", {
+    className: "err"
+  }, err), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 12
     }
@@ -771,16 +786,23 @@ async function gerarFollowUpsLead(lead, regras) {
   const dataBase = lead.data_captura;
   const inserts = LEAD_CHAVES.map(chave => {
     const regra = regraByChave(regras, chave);
-    return regra ? {
+    if (!regra) return null;
+    const data_prevista = addDays(dataBase, OFFSETS_LEAD[chave]);
+    return {
       regra_id: regra.id,
       lead_id: lead.id,
       cliente_id: null,
-      data_prevista: addDays(dataBase, OFFSETS_LEAD[chave]),
-      status: "pendente"
-    } : null;
+      data_prevista,
+      status: "pendente",
+      dedupe_key: dedupeKey({
+        lead_id: lead.id,
+        regra_id: regra.id,
+        data_prevista
+      })
+    };
   }).filter(Boolean);
   if (inserts.length) await sb.from("follow_up_instancias").upsert(inserts, {
-    onConflict: "lead_id,regra_id,data_prevista",
+    onConflict: "dedupe_key",
     ignoreDuplicates: true
   });
 }
@@ -802,16 +824,23 @@ async function gerarFollowUpsCadastro(cliente, regras) {
   const dataBase = (cliente.criado_em || new Date().toISOString()).slice(0, 10);
   const inserts = CADASTRO_CHAVES.map(chave => {
     const regra = regraByChave(regras, chave);
-    return regra ? {
+    if (!regra) return null;
+    const data_prevista = addDays(dataBase, OFFSETS_CADASTRO[chave]);
+    return {
       regra_id: regra.id,
       cliente_id: cliente.id,
       venda_id: null,
-      data_prevista: addDays(dataBase, OFFSETS_CADASTRO[chave]),
-      status: "pendente"
-    } : null;
+      data_prevista,
+      status: "pendente",
+      dedupe_key: dedupeKey({
+        cliente_id: cliente.id,
+        regra_id: regra.id,
+        data_prevista
+      })
+    };
   }).filter(Boolean);
   if (inserts.length) await sb.from("follow_up_instancias").upsert(inserts, {
-    onConflict: "cliente_id,regra_id,data_prevista",
+    onConflict: "dedupe_key",
     ignoreDuplicates: true
   });
 }
@@ -831,16 +860,23 @@ async function gerarFollowUpsDaVenda(venda, clienteId, regras, incluirWhatsapp, 
     const regra = regraByChave(regras, chave);
     if (!regra) continue;
     const base = chave === "feedback_pos_compra" ? dataRecebimento || venda.data_venda : venda.data_venda;
+    const data_prevista = addDays(base, OFFSETS[chave]);
     inserts.push({
       regra_id: regra.id,
       cliente_id: clienteId,
       venda_id: venda.id,
-      data_prevista: addDays(base, OFFSETS[chave]),
-      status: "pendente"
+      data_prevista,
+      status: "pendente",
+      dedupe_key: dedupeKey({
+        venda_id: venda.id,
+        cliente_id: clienteId,
+        regra_id: regra.id,
+        data_prevista
+      })
     });
   }
   if (inserts.length) await sb.from("follow_up_instancias").upsert(inserts, {
-    onConflict: "venda_id,regra_id",
+    onConflict: "dedupe_key",
     ignoreDuplicates: true
   });
 }
@@ -864,16 +900,23 @@ async function resetarReativacao(clienteId, novaData, regras) {
   }
   const inserts = REATIVACAO_CHAVES.map(chave => {
     const regra = regraByChave(regras, chave);
-    return regra ? {
+    if (!regra) return null;
+    const data_prevista = addDays(novaData, OFFSETS[chave]);
+    return {
       regra_id: regra.id,
       cliente_id: clienteId,
       venda_id: null,
-      data_prevista: addDays(novaData, OFFSETS[chave]),
-      status: "pendente"
-    } : null;
+      data_prevista,
+      status: "pendente",
+      dedupe_key: dedupeKey({
+        cliente_id: clienteId,
+        regra_id: regra.id,
+        data_prevista
+      })
+    };
   }).filter(Boolean);
   if (inserts.length) await sb.from("follow_up_instancias").upsert(inserts, {
-    onConflict: "cliente_id,regra_id,data_prevista",
+    onConflict: "dedupe_key",
     ignoreDuplicates: true
   });
 }
@@ -892,18 +935,19 @@ async function checarFidelidade(clienteId, vendaData, regras) {
   if (!chave) return;
   const regra = regraByChave(regras, chave);
   if (!regra) return;
-  const {
-    data: existente
-  } = await sb.from("follow_up_instancias").select("id").eq("cliente_id", clienteId).eq("regra_id", regra.id);
-  if (existente && existente.length) return;
   await sb.from("follow_up_instancias").upsert({
     regra_id: regra.id,
     cliente_id: clienteId,
     venda_id: null,
     data_prevista: vendaData,
-    status: "pendente"
+    status: "pendente",
+    dedupe_key: dedupeKey({
+      cliente_id: clienteId,
+      regra_id: regra.id,
+      data_prevista: vendaData
+    })
   }, {
-    onConflict: "cliente_id,regra_id,data_prevista",
+    onConflict: "dedupe_key",
     ignoreDuplicates: true
   });
 }
