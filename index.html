@@ -131,6 +131,45 @@ function fmt(d) {
   const [y, m, dd] = d.split("-");
   return `${dd}/${m}/${y}`;
 }
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+function ultimoDiaDoMes(ano, mes) {
+  return new Date(ano, mes, 0).getDate();
+} // mes: 1-12
+
+// Garante que todo cliente aniversariante do mês atual tem um lembrete gerado
+// (roda toda vez que o painel de Follow-ups é aberto — não depende de cron)
+async function garantirAniversariosDoMes() {
+  const {
+    data: regra
+  } = await sb.from("follow_up_regras").select("*").eq("chave", "aniversario_cupom").maybeSingle();
+  if (!regra) return;
+  const agora = new Date();
+  const ano = agora.getFullYear();
+  const mes = agora.getMonth() + 1; // 1-12
+  const dataPrevista = `${ano}-${pad2(mes)}-01`;
+  const validade = `${ano}-${pad2(mes)}-${pad2(ultimoDiaDoMes(ano, mes))}`;
+  const prefixoAno = `${ano}-${pad2(mes)}`;
+  const {
+    data: clientesAniversariantes
+  } = await sb.from("clientes").select("id,nome,data_nascimento").not("data_nascimento", "is", null);
+  const doMes = (clientesAniversariantes || []).filter(c => c.data_nascimento && c.data_nascimento.slice(5, 7) === pad2(mes));
+  if (!doMes.length) return;
+  const {
+    data: jaGerados
+  } = await sb.from("follow_up_instancias").select("cliente_id").eq("regra_id", regra.id).gte("data_prevista", `${prefixoAno}-01`).lte("data_prevista", `${prefixoAno}-31`);
+  const setJaGerados = new Set((jaGerados || []).map(f => f.cliente_id));
+  const inserts = doMes.filter(c => !setJaGerados.has(c.id)).map(c => ({
+    regra_id: regra.id,
+    cliente_id: c.id,
+    venda_id: null,
+    data_prevista: dataPrevista,
+    status: "pendente",
+    observacao: `Cupom de aniversário válido até ${fmt(validade)}`
+  }));
+  if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
+}
 
 // ============ LOGIN ============
 function Login({
@@ -428,6 +467,140 @@ function ImportClientesModal({
   }, status));
 }
 
+// ============ LEADS (prospecção ativa: Instagram) ============
+function LeadForm({
+  onSaved
+}) {
+  const [form, setForm] = useState({
+    nome: "",
+    instagram_handle: ""
+  });
+  const [saving, setSaving] = useState(false);
+  async function submit(e) {
+    e.preventDefault();
+    setSaving(true);
+    const {
+      data: lead,
+      error
+    } = await sb.from("leads").insert({
+      ...form,
+      data_captura: today()
+    }).select().single();
+    if (!error) {
+      const {
+        data: regras
+      } = await sb.from("follow_up_regras").select("*").eq("ativo", true);
+      await gerarFollowUpsLead(lead, regras || []);
+    }
+    setSaving(false);
+    if (!error) {
+      onSaved();
+      setForm({
+        nome: "",
+        instagram_handle: ""
+      });
+    }
+  }
+  return /*#__PURE__*/React.createElement("form", {
+    className: "card",
+    onSubmit: submit
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "row"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Nome *"), /*#__PURE__*/React.createElement("input", {
+    value: form.nome,
+    onChange: e => setForm({
+      ...form,
+      nome: e.target.value
+    }),
+    required: true
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", null, "Instagram (@)"), /*#__PURE__*/React.createElement("input", {
+    value: form.instagram_handle,
+    onChange: e => setForm({
+      ...form,
+      instagram_handle: e.target.value
+    })
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "submit",
+    disabled: saving
+  }, saving ? "Salvando..." : "Adicionar lead")));
+}
+function LeadsTab() {
+  const [leads, setLeads] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const load = useCallback(async () => {
+    const {
+      data
+    } = await sb.from("leads").select("*").order("criado_em", {
+      ascending: false
+    });
+    setLeads(data || []);
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  async function marcar(lead, status) {
+    const {
+      data: regras
+    } = await sb.from("follow_up_regras").select("*").eq("ativo", true);
+    await sb.from("leads").update({
+      status
+    }).eq("id", lead.id);
+    await cancelarFollowUpsLead(lead.id, regras || []);
+    load();
+  }
+  const STATUS_LABEL = {
+    ativo: "Em prospecção",
+    convertido: "Convertido",
+    descartado: "Descartado"
+  };
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "toolbar"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "muted"
+  }, leads.length, " lead(s)"), /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    onClick: () => setShowForm(s => !s)
+  }, showForm ? "Cancelar" : "+ Novo lead")), /*#__PURE__*/React.createElement("div", {
+    className: "muted",
+    style: {
+      marginBottom: 12
+    }
+  }, "Seguidor novo, comentário forte, resposta de story ou DM — qualquer interação que valha abordar. Marcar como \"convertido\" só encerra a régua de prospecção — quando ele virar cliente de verdade (cadastro ou compra), cadastre normalmente na aba Clientes."), showForm && /*#__PURE__*/React.createElement(LeadForm, {
+    onSaved: () => {
+      setShowForm(false);
+      load();
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {
+      padding: 0
+    }
+  }, leads.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "empty"
+  }, "Nenhum lead cadastrado ainda.") : /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Nome"), /*#__PURE__*/React.createElement("th", null, "Instagram"), /*#__PURE__*/React.createElement("th", null, "Captado em"), /*#__PURE__*/React.createElement("th", null, "Status"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, leads.map(l => /*#__PURE__*/React.createElement("tr", {
+    key: l.id
+  }, /*#__PURE__*/React.createElement("td", null, l.nome), /*#__PURE__*/React.createElement("td", {
+    className: "muted"
+  }, l.instagram_handle || "—"), /*#__PURE__*/React.createElement("td", {
+    className: "muted"
+  }, fmt(l.data_captura)), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
+    className: "pill " + (l.status === "ativo" ? "pendente" : l.status === "convertido" ? "feito" : "atrasado")
+  }, STATUS_LABEL[l.status])), /*#__PURE__*/React.createElement("td", null, l.status === "ativo" && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    style: {
+      marginRight: 6
+    },
+    onClick: () => marcar(l, "convertido")
+  }, "Marcar como convertido"), /*#__PURE__*/React.createElement("button", {
+    className: "secondary",
+    onClick: () => marcar(l, "descartado")
+  }, "Descartar")))))))));
+}
+
 // ============ CLIENTES TAB ============
 function ClientesTab() {
   const [clientes, setClientes] = useState([]);
@@ -551,6 +724,37 @@ const OFFSETS_CADASTRO = {
   cadastro_oferta_troca: 45,
   cadastro_reclassificacao: 67
 };
+const LEAD_CHAVES = ["lead_reconhecimento", "lead_contato_valor", "lead_oferta_boasvindas", "lead_reforco_storytelling", "lead_reclassificacao"];
+const OFFSETS_LEAD = {
+  lead_reconhecimento: 1,
+  lead_contato_valor: 5,
+  lead_oferta_boasvindas: 9,
+  lead_reforco_storytelling: 19,
+  lead_reclassificacao: 30
+};
+
+// Gera a régua de prospecção para um lead recém-capturado (seguidor/DM/comentário)
+async function gerarFollowUpsLead(lead, regras) {
+  const dataBase = lead.data_captura;
+  const inserts = LEAD_CHAVES.map(chave => {
+    const regra = regraByChave(regras, chave);
+    return regra ? {
+      regra_id: regra.id,
+      lead_id: lead.id,
+      cliente_id: null,
+      data_prevista: addDays(dataBase, OFFSETS_LEAD[chave]),
+      status: "pendente"
+    } : null;
+  }).filter(Boolean);
+  if (inserts.length) await sb.from("follow_up_instancias").insert(inserts);
+}
+async function cancelarFollowUpsLead(leadId, regras) {
+  const regraIds = regras.filter(r => LEAD_CHAVES.includes(r.chave)).map(r => r.id);
+  if (!regraIds.length) return;
+  await sb.from("follow_up_instancias").update({
+    status: "cancelado"
+  }).eq("lead_id", leadId).in("regra_id", regraIds).eq("status", "pendente");
+}
 
 // ---- Funções compartilhadas de geração de follow-up (usadas no form manual e na importação) ----
 function regraByChave(regras, chave) {
@@ -1486,12 +1690,18 @@ function FollowUpsTab() {
   const [filtro, setFiltro] = useState("todos"); // atrasados | hoje | semana | todos
 
   const load = useCallback(async () => {
-    const {
-      data
-    } = await sb.from("follow_up_instancias").select("*, clientes(nome, telefone), follow_up_regras(descricao, chave)").eq("status", "pendente").order("data_prevista", {
+    await garantirAniversariosDoMes();
+    const [{
+      data: deClientes
+    }, {
+      data: deLeads
+    }] = await Promise.all([sb.from("follow_up_instancias").select("*, clientes(nome, telefone), follow_up_regras(descricao, chave)").eq("status", "pendente").not("cliente_id", "is", null).order("data_prevista", {
       ascending: true
-    }).limit(200);
-    setItems(data || []);
+    }).limit(200), sb.from("follow_up_instancias").select("*, leads(nome, instagram_handle), follow_up_regras(descricao, chave)").eq("status", "pendente").not("lead_id", "is", null).order("data_prevista", {
+      ascending: true
+    }).limit(200)]);
+    const combinados = [...(deClientes || []), ...(deLeads || [])].sort((a, b) => a.data_prevista < b.data_prevista ? -1 : 1);
+    setItems(combinados);
   }, []);
   useEffect(() => {
     load();
@@ -1534,11 +1744,16 @@ function FollowUpsTab() {
     className: "empty"
   }, "Nenhum follow-up nesse filtro.") : /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Cliente"), /*#__PURE__*/React.createElement("th", null, "Ação"), /*#__PURE__*/React.createElement("th", null, "Data prevista"), /*#__PURE__*/React.createElement("th", null, "Status"), /*#__PURE__*/React.createElement("th", null))), /*#__PURE__*/React.createElement("tbody", null, list.map(f => {
     const atrasado = f.data_prevista < today();
+    const nome = f.clientes?.nome || f.leads?.nome || "—";
+    const contato = f.clientes?.telefone || f.leads?.instagram_handle || "";
+    const origem = f.lead_id ? "Lead" : "Cliente";
     return /*#__PURE__*/React.createElement("tr", {
       key: f.id
-    }, /*#__PURE__*/React.createElement("td", null, f.clientes?.nome || "—", /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement("td", null, nome, /*#__PURE__*/React.createElement("div", {
       className: "muted"
-    }, f.clientes?.telefone || "")), /*#__PURE__*/React.createElement("td", null, f.follow_up_regras?.descricao), /*#__PURE__*/React.createElement("td", {
+    }, origem, contato ? " · " + contato : "")), /*#__PURE__*/React.createElement("td", null, f.follow_up_regras?.descricao, f.observacao && /*#__PURE__*/React.createElement("div", {
+      className: "muted"
+    }, f.observacao)), /*#__PURE__*/React.createElement("td", {
       className: "muted"
     }, fmt(f.data_prevista)), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("span", {
       className: "pill " + (atrasado ? "atrasado" : "pendente")
@@ -1593,12 +1808,15 @@ function App() {
     className: "tab " + (tab === "followups" ? "active" : ""),
     onClick: () => setTab("followups")
   }, "Follow-ups"), /*#__PURE__*/React.createElement("div", {
+    className: "tab " + (tab === "leads" ? "active" : ""),
+    onClick: () => setTab("leads")
+  }, "Leads"), /*#__PURE__*/React.createElement("div", {
     className: "tab " + (tab === "vendas" ? "active" : ""),
     onClick: () => setTab("vendas")
   }, "Vendas"), /*#__PURE__*/React.createElement("div", {
     className: "tab " + (tab === "clientes" ? "active" : ""),
     onClick: () => setTab("clientes")
-  }, "Clientes")), tab === "followups" && /*#__PURE__*/React.createElement(FollowUpsTab, null), tab === "vendas" && /*#__PURE__*/React.createElement(VendasTab, null), tab === "clientes" && /*#__PURE__*/React.createElement(ClientesTab, null));
+  }, "Clientes")), tab === "followups" && /*#__PURE__*/React.createElement(FollowUpsTab, null), tab === "leads" && /*#__PURE__*/React.createElement(LeadsTab, null), tab === "vendas" && /*#__PURE__*/React.createElement(VendasTab, null), tab === "clientes" && /*#__PURE__*/React.createElement(ClientesTab, null));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.createElement(App, null));
 </script>
