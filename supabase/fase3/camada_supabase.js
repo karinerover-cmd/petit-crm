@@ -69,7 +69,7 @@
       + '<div style="font-size:13px;line-height:1.7">'
       + '<b>Supabase:</b> ' + m.prod.length + ' produtos visíveis (' + (m.todos.length - m.prod.length) + ' ocultos, ' + m.todos.length + ' no total) · ' + un + ' un · estoque R$ ' + vEst.toFixed(2)
       + ' · ' + m.vend.length + ' vendas (R$ ' + fat.toFixed(2) + ') · ' + m.cli.length + ' clientes<br>'
-      + '<b>Faturamento por mês:</b> ' + Object.keys(mes).sort().map(k => k + ' R$ ' + mes[k].toFixed(2)).join(' · ')
+      + lembreteBackup() + '<b>Faturamento por mês:</b> ' + Object.keys(mes).sort().map(k => k + ' R$ ' + mes[k].toFixed(2)).join(' · ')
       + '</div>';
     const b = $('gs-recarregar'); if (b) b.onclick = () => recarregar();
   }
@@ -270,11 +270,20 @@
           else if (x === 'pagamento' || x.includes('pgto') || x.includes('pagamento')) c.pgto = i; else if (x === 'cliente') c.cliente = i;
           else if (x === 'telefone' || x === 'tel') c.tel = i; else if (x === 'email') c.email = i; else if (x === 'observacoes' || x.includes('obs')) c.obs = i;
         });
-        const mapa = {}, erros = [];
+        const mapa = {}, erros = [], avisos = [];
         dados.forEach(line => {
           const p = line.split(','), nomeProd = (p[c.produto] || '').trim(), qtd = parseInt(p[c.qtd]) || 0;
           if (!nomeProd || !qtd) return;
-          const prod = produtos.find(x => norm(x.nome) === norm(nomeProd)) || todosProdutos.find(x => norm(x.nome) === norm(nomeProd));
+          // O app do vendedor só manda o NOME. Se dois produtos têm o mesmo nome (ex.: dois "LIP BALM"), desempata pelo preço da venda.
+          const precoVenda = parseFloat(String(p[c.preco] || '').replace(',', '.'));
+          const cands = produtos.filter(x => norm(x.nome) === norm(nomeProd));
+          let prod = cands[0];
+          if (cands.length > 1) {
+            const igual = cands.filter(x => !isNaN(precoVenda) && Math.abs(x.preco - precoVenda) < 0.011);
+            prod = igual.length === 1 ? igual[0] : (cands.find(x => x.qtd > 0) || cands[0]);
+            if (igual.length !== 1) { const a = nomeProd + ' (nome repetido, usei ' + prod.id + ' — confira)'; if (!avisos.includes(a)) avisos.push(a); }
+          }
+          if (!prod) prod = todosProdutos.find(x => norm(x.nome) === norm(nomeProd));
           if (!prod) { if (!erros.includes(nomeProd)) erros.push(nomeProd); return; }
           const vid = (p[c.vendaId] || '').trim() || (Date.now() + '-' + Math.random());
           const data = (p[c.data] || '').trim(), local = (p[c.local] || '').trim(), desc = parseFloat(p[c.desconto]) || 0;
@@ -293,7 +302,7 @@
         }
         await recarregar();
         mostrarAlertImport(novas + ' venda(s) importada(s) e estoque atualizado.' + (repetidas ? ' ' + repetidas + ' já tinha(m) sido importada(s) antes (ignorada(s)).' : '')
-          + (erros.length ? ' Produtos não encontrados: ' + erros.join(', ') + '.' : '') + (falhas.length ? ' Erros: ' + falhas.join(' | ') : ''), !falhas.length);
+          + (erros.length ? ' Produtos não encontrados: ' + erros.join(', ') + '.' : '') + (avisos.length ? ' ⚠️ Atenção: ' + avisos.join('; ') + '.' : '') + (falhas.length ? ' Erros: ' + falhas.join(' | ') : ''), !falhas.length);
       };
       r.readAsText(file, 'UTF-8'); e.target.value = '';
     };
@@ -350,6 +359,49 @@
     window.carregarDoSheets = sheets; window.sincronizarSheets = sheets;
   }
 
+  // ---------- Backup completo (um único arquivo .json com todas as tabelas) ----------
+  const TABELAS_BACKUP = ['canais', 'clientes', 'leads', 'follow_up_regras', 'produtos', 'regras_desconto', 'vendas', 'venda_itens',
+    'movimentos_estoque', 'cashback', 'follow_up_instancias'];      // ordem respeita as chaves estrangeiras
+  function baixar(nome, texto, mime) {                               // sem BOM (o arquivo é JSON)
+    const a = document.createElement('a'); a.download = nome;
+    if (location.protocol === 'file:') a.href = 'data:' + mime + ';charset=utf-8,' + encodeURIComponent(texto);   // file:// bloqueia blob:
+    else a.href = URL.createObjectURL(new Blob([texto], { type: mime + ';charset=utf-8' }));
+    document.body.appendChild(a); a.click(); setTimeout(() => document.body.removeChild(a), 300);
+  }
+  function lembreteBackup() {
+    let d = null; try { d = localStorage.getItem('petit_ultimo_backup'); } catch (e) { /* sem localStorage */ }
+    if (!d) return '<b>Último backup:</b> <span style="color:#A32D2D;font-weight:600">nunca feito neste navegador — faça em Exportar / Importar → Backup completo</span><br>';
+    const dias = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+    const txt = dias <= 0 ? 'hoje' : dias === 1 ? 'ontem' : 'há ' + dias + ' dias';
+    return '<b>Último backup:</b> ' + (dias > 7 ? '<span style="color:#A32D2D;font-weight:600">' + txt + ' — está na hora de fazer outro</span>' : txt) + '<br>';
+  }
+  async function backupCompleto() {
+    const msg = $('gs-bkp-msg'), btn = $('gs-bkp-btn');
+    try {
+      if (btn) btn.disabled = true; if (msg) { msg.style.color = ''; msg.textContent = 'Lendo todas as tabelas do Supabase…'; }
+      const dados = { formato: 'petit-supabase-backup-v1', gerado_em: new Date().toISOString(), tabelas: {}, contagem: {} };
+      for (const t of TABELAS_BACKUP) { dados.tabelas[t] = await todas(t, '*', { col: t === 'produtos' ? 'sku' : 'id' }); dados.contagem[t] = dados.tabelas[t].length; }
+      const txt = JSON.stringify(dados);
+      const h = new Date(), ymd = h.getFullYear() + '-' + String(h.getMonth() + 1).padStart(2, '0') + '-' + String(h.getDate()).padStart(2, '0');
+      (window.__baixarTeste || baixar)('backup_petit_supabase_' + ymd + '.json', txt, 'application/json');
+      try { localStorage.setItem('petit_ultimo_backup', dados.gerado_em); } catch (e) { /* ok */ }
+      const linhas = Object.values(dados.contagem).reduce((a, b) => a + b, 0);
+      if (msg) msg.textContent = '✓ Backup gerado: ' + TABELAS_BACKUP.length + ' tabelas, ' + linhas + ' registros, ' + (txt.length / 1024).toFixed(0) + ' KB. Guarde o arquivo em DOIS lugares (ex.: pasta do computador e outro drive).';
+      if ($('conf-supabase')) recarregar();
+    } catch (e) { if (msg) { msg.style.color = '#A32D2D'; msg.textContent = 'Erro no backup: ' + e.message; } }
+    if (btn) btn.disabled = false;
+  }
+  function injetarBackup() {                                          // troca o card antigo ("3 CSVs") pelo backup completo
+    window.exportarExcel = backupCompleto;
+    const velho = document.querySelector('#sec-ferramentas button[onclick="exportarExcel()"]'), card = velho && velho.closest('.table-card');
+    if (!card || card.dataset.gs) return; card.dataset.gs = '1';
+    card.innerHTML = '<div style="font-size:15px;font-weight:600;margin-bottom:6px">💾 Backup completo do Supabase</div>'
+      + '<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Baixa <b>um único arquivo</b> (.json) com <b>todas</b> as tabelas: produtos, estoque e movimentos, vendas e itens, clientes, canais e as do CRM (cashback, follow-ups, leads).</div>'
+      + '<div style="font-size:12px;color:var(--muted);margin-bottom:14px">Faça toda semana e guarde em <b>dois lugares</b>. Para restaurar, me envie o arquivo. Não guarda os usuários de login (ficam no Supabase Auth).</div>'
+      + '<button class="btn btn-primary" id="gs-bkp-btn" style="width:100%">💾 Baixar backup completo</button><div id="gs-bkp-msg" style="font-size:12px;margin-top:10px;color:var(--muted)"></div>';
+    $('gs-bkp-btn').addEventListener('click', backupCompleto);
+  }
+
   // ---------- Exportar para a planilha de promoções (Fase 4) ----------
   // CSV para colar na aba "Supabase" da planilha. As colunas A–D são as que a planilha consulta (ID, Produto, Estoque atual, Vendas 30d).
   async function exportarPlanilha() {
@@ -384,7 +436,7 @@
 
   async function carregar(cliente) {
     if (cliente) sb = cliente;
-    instalarGravacao(); injetarExportacao();
+    instalarGravacao(); injetarExportacao(); injetarBackup();
     aplicar(mapear(await buscar()));
     $('gs-login').style.display = 'none';
     $('gs-banner').style.display = 'flex';
@@ -410,6 +462,6 @@
     if (data && data.session) { $('gs-msg').textContent = 'Carregando dados…'; try { await carregar(); } catch (e) { $('gs-msg').textContent = 'Erro: ' + e.message; } }
   }
 
-  window.__gestao = { carregar, mapear, recarregar };   // usado nos testes
+  window.__gestao = { carregar, mapear, recarregar, sb: () => sb };   // usado nos testes
   iniciar();
 })();
