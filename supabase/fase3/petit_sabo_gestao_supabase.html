@@ -729,6 +729,7 @@ function calcVencimento(fab,meses){
   if(!m||!y||m.length!==2||y.length!==4) return null;
   const d=new Date(parseInt(y),parseInt(m)-1+parseInt(meses)+1,1); // regra do PRD (Fase 3)
   d.setDate(d.getDate()-1);
+  if(d.getMonth()===1) d.setDate(28); // fevereiro: sempre dia 28
   return d;
 }
 function fmtMes(d){if(!d)return'—';return String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();}
@@ -2260,9 +2261,41 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
     window.carregarDoSheets = sheets; window.sincronizarSheets = sheets;
   }
 
+  // ---------- Exportar para a planilha de promoções (Fase 4) ----------
+  // CSV para colar na aba "Supabase" da planilha. As colunas A–D são as que a planilha consulta (ID, Produto, Estoque atual, Vendas 30d).
+  async function exportarPlanilha() {
+    const msg = $('gs-exp-msg'), btn = $('gs-exp-planilha');
+    try {
+      btn.disabled = true; msg.style.color = ''; msg.textContent = 'Buscando no Supabase…';
+      const linhas = await todas('tabela_produtos', '*', { col: 'sku' });
+      const nf = v => (v === null || v === undefined || v === '') ? '' : String(v).replace('.', ',');
+      const dt = s => { if (!s) return ''; const [y, m, d] = String(s).slice(0, 10).split('-'); return d + '/' + m + '/' + y; };
+      const tx = v => { const s = (v === null || v === undefined) ? '' : String(v); return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+      const cab = ['ID', 'Produto', 'Estoque atual', 'Vendas 30d', 'Data de vencimento', 'Categoria validade (meses)', 'Valor sem desconto',
+        'Coleção', 'Categoria', 'Dias para vencer', 'Status de estoque', 'Status validade', 'Promoção sugerida', 'Rotatividade', 'Meses restantes',
+        'Desconto (fração)', 'Valor final', 'Status', 'Classe ABC 90d', 'Classe ABC 12m', 'Oculto no app'];
+      const corpo = linhas.map(l => [l.sku, l.nome, nf(l.estoque_atual), nf(l.vendas_30d), dt(l.data_vencimento), nf(l.validade_meses), nf(l.valor_sem_desconto),
+        l.colecao, l.categoria, nf(l.dias_para_vencer), l.status_estoque, l.status_validade, l.promocao_sugerida, l.rotatividade, nf(l.meses_restantes),
+        nf(l.desconto_pct), nf(l.valor_final), l.status, l.classe_abc_90d, l.classe_abc_12m, l.oculto ? 'sim' : 'não'].map(tx).join(';'));
+      const hoje = new Date(); const ymd = hoje.getFullYear() + '-' + String(hoje.getMonth() + 1).padStart(2, '0') + '-' + String(hoje.getDate()).padStart(2, '0');
+      csvDown(cab.join(';') + '\n' + corpo.join('\n'), 'supabase_para_planilha_' + ymd + '.csv');
+      msg.textContent = '✓ ' + linhas.length + ' produtos exportados (' + ymd + '). Abra o arquivo e cole na aba "Supabase" da planilha.';
+    } catch (e) { msg.style.color = '#A32D2D'; msg.textContent = 'Erro: ' + e.message; }
+    btn.disabled = false;
+  }
+  function injetarExportacao() {
+    if ($('gs-exp-planilha')) return;
+    const grade = document.querySelector('#sec-ferramentas .page-content > div'); if (!grade) return;
+    const card = document.createElement('div'); card.className = 'table-card'; card.style.cssText = 'padding:22px;grid-column:1 / -1';
+    card.innerHTML = '<div style="font-size:15px;font-weight:600;margin-bottom:6px">📈 Exportar para a planilha de promoções</div>'
+      + '<div style="font-size:12px;color:var(--muted);margin-bottom:14px">CSV com o <b>estoque atual</b>, as <b>vendas dos últimos 30 dias</b>, o vencimento e o cálculo de promoção de cada produto, direto do Supabase. Cole na aba <b>Supabase</b> da planilha.</div>'
+      + '<button class="btn btn-primary" id="gs-exp-planilha" style="width:100%">⬇ Baixar dados para a planilha</button><div id="gs-exp-msg" style="font-size:12px;margin-top:10px;color:var(--muted)"></div>';
+    grade.appendChild(card); $('gs-exp-planilha').addEventListener('click', exportarPlanilha);
+  }
+
   async function carregar(cliente) {
     if (cliente) sb = cliente;
-    instalarGravacao();
+    instalarGravacao(); injetarExportacao();
     aplicar(mapear(await buscar()));
     $('gs-login').style.display = 'none';
     $('gs-banner').style.display = 'flex';

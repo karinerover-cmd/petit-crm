@@ -15,6 +15,8 @@ troca("function save(k,v){_lsSet(k,v);if(k!=='ps3_checklist')agendarSync();}",
   "function save(k,v){if(window.__SEM_LS&&['ps3_produtos','ps3_vendas','ps3_clientes','ps3_canais'].includes(k))return;_lsSet(k,v);if(k!=='ps3_checklist')agendarSync();}", 'save');
 // 2) regra de vencimento do PRD: último dia do mês (fabricação + validade), um mês depois da regra antiga do app
 troca("const d=new Date(parseInt(y),parseInt(m)-1+parseInt(meses),1);", "const d=new Date(parseInt(y),parseInt(m)-1+parseInt(meses)+1,1); // regra do PRD (Fase 3)", 'calcVencimento');
+// 2b) fevereiro sempre vence dia 28 (fevereiro varia entre 28 e 29 dias)
+troca("  d.setDate(d.getDate()-1);\n  return d;", "  d.setDate(d.getDate()-1);\n  if(d.getMonth()===1) d.setDate(28); // fevereiro: sempre dia 28\n  return d;", 'calcVencimento fev');
 // 3) ids de cliente agora são texto (uuid): precisam de aspas no onclick
 troca("onclick=\"excluirCliente(${c.id})\"", "onclick=\"excluirCliente('${c.id}')\"", 'excluirCliente');
 

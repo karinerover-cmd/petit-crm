@@ -26,6 +26,7 @@ async function api(body) { const r = await fetch('/api', { method: 'POST', body:
 const SELECTS = {
   produtos: 'select sku,nome,colecao,categoria,data_fabricacao,validade_meses,preco::float8 as preco,estoque_atual,oculto from produtos',
   canais: 'select nome,tipo,ativo from canais',
+  tabela_produtos: 'select * from tabela_produtos',
   clientes: 'select id,nome,telefone,email from clientes',
   vendas: `select v.id, v.cliente_id, v.valor::float8 as valor, v.data_venda::text as data_venda, v.forma_pagamento, v.desconto_venda::float8 as desconto_venda, v.origem, v.observacao,
       json_build_object('nome',c.nome) as canais, json_build_object('nome',cl.nome,'telefone',cl.telefone,'email',cl.email) as clientes,
