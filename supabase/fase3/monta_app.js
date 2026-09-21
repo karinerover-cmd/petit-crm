@@ -4,6 +4,7 @@ const dir = 'C:/Users/karin/OneDrive/Documentos/petit sabo/financeiro petit/sist
 let h = fs.readFileSync(dir + 'petit_sabo_gestao.html', 'utf8');
 const camada = fs.readFileSync(__dirname + '/camada_supabase.js', 'utf8');
 const nfe = fs.readFileSync(__dirname + '/../fase6/nfe.js', 'utf8'), telaNotas = fs.readFileSync(__dirname + '/../fase6/tela_notas.js', 'utf8');   // Fase 6b
+const soapcalc = fs.readFileSync(__dirname + '/../fase7/soapcalc.js', 'utf8'), precificacao = fs.readFileSync(__dirname + '/../fase7/precificacao.js', 'utf8'), telaFormulas = fs.readFileSync(__dirname + '/../fase7/tela_formulas.js', 'utf8');   // Fase 7
 
 function troca(de, para, rotulo) {
   const n = h.split(de).length - 1;
@@ -44,7 +45,7 @@ const overlay = `
 troca('<body>', '<body>' + overlay, 'body');
 
 // 4) camada Supabase depois do script principal
-troca('</script>\n</body>', '</script>\n<script>\n' + camada + '\n</script>\n<script>\n' + nfe + '\n</script>\n<script>\n' + telaNotas + '\n</script>\n</body>', 'fim');
+troca('</script>\n</body>', '</script>\n<script>\n' + camada + '\n</script>\n<script>\n' + nfe + '\n</script>\n<script>\n' + telaNotas + '\n</script>\n<script>\n' + soapcalc + '\n' + precificacao + '\n</script>\n<script>\n' + telaFormulas + '\n</script>\n</body>', 'fim');
 
 fs.writeFileSync(dir + 'petit_sabo_gestao_supabase.html', h);
 console.log('gerado:', (h.length / 1024).toFixed(1) + ' KB');

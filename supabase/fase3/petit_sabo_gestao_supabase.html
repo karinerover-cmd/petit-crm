@@ -2531,7 +2531,27 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
   }
 
   // ---------- editor de um item ----------
-  function editor(sc, i, j, row, custo, qtd) {
+  const low = x => String(x == null ? '' : x).trim().toLowerCase(), d10 = x => String(x || '').slice(0, 10);
+  // Procura cadastro existente (mesmo critério do banco: nome + fornecedor) e compara tamanho e data com a compra que definiu o custo atual.
+  function existente(c, nota) {
+    let reg = null, itens = [];
+    if (c.destino === 'materia_prima') { reg = c.mp_id ? D.mps.find(m => m.id === c.mp_id) : D.mps.find(m => low(m.nome) === low(c.nome) && (m.fornecedor_cnpj || '') === (nota.cnpj || '')); if (reg) itens = D.itens.filter(i => i.materia_prima_id === reg.id); }
+    else if (c.destino === 'embalagem_envio') { reg = D.embs.find(m => low(m.nome) === low(c.nome)); if (reg) itens = D.itens.filter(i => i.embalagem_envio_id === reg.id); }
+    if (!reg) return null;
+    const ult = d10(reg.data_ultima_compra), ref = itens.map(i => ({ i, n: D.notas.find(x => x.id === i.nota_fiscal_id) })).filter(x => x.n)
+      .sort((a, b) => ((d10(b.n.data_emissao) === ult) - (d10(a.n.data_emissao) === ult)) || d10(b.n.data_emissao).localeCompare(d10(a.n.data_emissao)))[0];
+    return { reg, ref, ult };
+  }
+  function avisoAtualizar(sc, i, j, c, nota, cb) {
+    if (c.destino !== 'materia_prima' && c.destino !== 'embalagem_envio') return '';
+    const ex = existente(c, nota); if (!ex) return '<div class="td-muted">🆕 novo cadastro</div>';
+    const r = ex.reg, un = r.unidade_base, k = `'${sc}',${i},${j}`, base = '<div class="td-muted">Já cadastrado: <b>' + un4(r.custo_unitario_atual) + '/' + un + '</b>' + (ex.ult ? ' em ' + dataBR(ex.ult) : '') + '. Esta nota: <b>' + un4(cb) + '/' + c.base + '</b> em ' + dataBR(nota.data) + '.</div>';
+    if (ex.ref && Number(ex.ref.i.conteudo_por_unidade) !== Number(c.cont)) return base + '<div style="color:#B26A00;font-size:11px">⚠ Tamanho diferente (antes ' + Number(ex.ref.i.conteudo_por_unidade) + ' ' + esc(ex.ref.i.unidade_base || un) + ', agora ' + (Number(c.cont) || '?') + ' ' + c.base + '): o custo NÃO será atualizado. Para cadastrar separado, mude o nome.</div>';
+    if (c.destino === 'embalagem_envio' && ex.ref && (ex.ref.n.fornecedor_cnpj || '') !== (nota.cnpj || '')) return base + '<div style="color:#B26A00;font-size:11px">⚠ Fornecedor diferente do da última compra: o custo NÃO será atualizado.</div>';
+    if (ex.ult && d10(nota.data) < ex.ult) return base + '<div class="td-muted">Nota mais antiga que a última compra: o custo não muda.</div>';
+    return base + '<label style="font-size:12px"><input type="checkbox" style="width:auto" ' + (c.atualizar !== false ? 'checked' : '') + ' onchange="PetitNF.set(' + k + ',&quot;atualizar&quot;,this.checked)"> Atualizar custo e data da última compra</label>';
+  }
+  function editor(sc, i, j, row, custo, qtd, nota) {
     const c = row.cls, k = `'${sc}',${i},${j}`, pendente = c.destino === 'pendente';
     const opt = (o, v) => Object.entries(o).map(([a, b]) => `<option value="${a}"${a === v ? ' selected' : ''}>${b}</option>`).join('');
     let cat = '';
@@ -2548,12 +2568,12 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
       <td><b>${esc(row.item.descricao)}</b><div class="td-muted">cód. ${esc(row.item.codigo || row.item.codigo_fornecedor)} · ${qtd} ${esc(row.item.unidade || row.item.unidade_compra || '')}${c.origem === 'memoria' ? ' · 🧠 lembrado' : c.origem === 'sem_regra' ? ' · ❓ sem regra' : ''}</div></td>
       <td>${brl(custo)}</td>
       <td><select onchange="PetitNF.set(${k},'destino',this.value)">${opt(DEST, c.destino)}</select>${cat}</td>
-      <td>${nomeCampo}</td>
+      <td>${nomeCampo}${avisoAtualizar(sc, i, j, c, nota || {}, cb)}</td>
       <td>${usaConteudo ? `<div style="display:flex;gap:4px"><input type="number" step="any" min="0" value="${c.cont}" style="width:80px" onchange="PetitNF.set(${k},'cont',this.value)"><select style="width:64px" onchange="PetitNF.set(${k},'base',this.value)">${['g', 'ml', 'un'].map(u => `<option${u === c.base ? ' selected' : ''}>${u}</option>`).join('')}</select></div><div class="td-muted">por unidade comprada → ${un4(cb)}/${c.base}</div>` : '<span class="td-muted">—</span>'}</td>
     </tr>`;
   }
   const payloadItem = (c) => ({ destino: c.destino, conteudo_por_unidade: Number(c.cont) || 1, unidade_base: c.base,
-    materia_prima: { nome: c.nome, categoria: c.categoria || 'ingrediente', tipo: c.tipo, id: c.mp_id || null }, embalagem: { nome: c.nome },
+    materia_prima: { nome: c.nome, categoria: c.categoria || 'ingrediente', tipo: c.tipo, id: c.mp_id || null, atualizar_custo: c.atualizar !== false }, embalagem: { nome: c.nome, atualizar_custo: c.atualizar !== false },
     despesa: { descricao: c.nome, categoria: c.categoria || 'outro', recorrente: !!c.recorrente } });
   function valida(c) {
     if (c.destino === 'pendente') return '';
@@ -2595,6 +2615,47 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
       if (r.cls.destino === 'pendente') return aviso('Escolha um destino para o item.', false);
       try { await rpc('gestao_classificar_item', { p: Object.assign({ item_id: r.id }, payloadItem(r.cls)) }); await carregar(); aviso('Item classificado.', true); desenhar(); } catch (er) { aviso(er.message, false); }
     },
+    async excluirMp(id) {
+      const m = D.mps.find(x => x.id === id), n = D.itens.filter(i => i.materia_prima_id === id).length;
+      const dois = '\n\n';
+      if (!confirm('Excluir a matéria-prima "' + (m ? m.nome : '') + '"?' + (n ? dois + n + ' item(ns) de nota fiscal ligado(s) a ela voltam para a lista de Pendentes (a nota e o custo dela não mudam).' : ''))) return;
+      const fim = r => { aviso('Matéria-prima excluída.' + (r.itens_voltaram_para_pendente ? ' ' + r.itens_voltaram_para_pendente + ' item(ns) de nota voltaram para Pendentes.' : '') + (r.formulas_afetadas ? ' Removida de ' + r.formulas_afetadas + ' fórmula(s): ' + r.formulas + '.' : ''), true); return carregar().then(desenhar); };
+      try { await fim(await rpc('gestao_excluir_materia_prima', { p_id: id })); } catch (er) {
+        if (!/usada nas f/.test(er.message)) return aviso(er.message, false);
+        if (!confirm(er.message.replace(/ Confirme para removê-la.*$/, '') + dois + 'Excluir mesmo assim? Ela será tirada dessas fórmulas (o custo delas deixa de incluí-la).')) return;
+        try { await fim(await rpc('gestao_excluir_materia_prima', { p_id: id, p_forcar: true })); } catch (e2) { aviso(e2.message, false); }
+      }
+    },
+    async ignorar(id, sim) {
+      if (sim && !confirm('Tirar este item da lista de Pendentes? Ele continua na nota fiscal (o custo da nota não muda), mas não vira matéria-prima, embalagem nem despesa. Dá para desfazer.')) return;
+      try { await rpc('gestao_ignorar_item', { p_id: id, p_ignorar: !!sim }); await carregar(); aviso(sim ? 'Item ignorado.' : 'Item voltou para Pendentes.', true); desenhar(); } catch (er) { aviso(er.message, false); }
+    },
+    editarEmb(id) { window.__embEdit = id ? Object.assign({}, D.embs.find(m => m.id === id)) : { unidade_base: 'un', ativo: true }; desenhar(); },
+    async salvarEmb() {
+      const g = k => $('em-' + k), p = { id: window.__embEdit.id || null, nome: g('nome').value, unidade_base: g('base').value, custo_unitario_atual: g('custo').value.replace(',', '.'),
+        data_ultima_compra: g('data').value, observacao: g('obs').value, ativo: g('ativo').checked };
+      try { await rpc('gestao_salvar_embalagem_envio', { p }); window.__embEdit = null; await carregar(); aviso('Embalagem salva.', true); desenhar(); } catch (er) { aviso(er.message, false); }
+    },
+    async paraProduto(id) {
+      const m = D.embs.find(x => x.id === id);
+      if (!confirm('Mudar "' + (m ? m.nome : '') + '" para EMBALAGEM DE PRODUTO?' + String.fromCharCode(10, 10) + 'Ela passa a entrar no custo do produto e na precificação (e deixa de contar como custo fixo de envio). O custo, a data e os itens das notas são mantidos.')) return;
+      try { const r = await rpc('gestao_converter_embalagem_para_produto', { p_id: id }); await carregar(); aviso('"' + r.nome + '" agora é embalagem de produto (' + r.itens_atualizados + ' item(ns) de nota atualizados).' + (r.uniu_com_existente ? ' Foi unida a um cadastro que já existia.' : '') + ' Complete o cadastro em Matérias-primas, se precisar.', true); desenhar(); } catch (er) { aviso(er.message, false); }
+    },
+    async paraEnvio(id) {
+      const m = D.mps.find(x => x.id === id);
+      if (!confirm('Mudar "' + (m ? m.nome : '') + '" para EMBALAGEM DE ENVIO?' + String.fromCharCode(10, 10) + 'Ela sai do custo do produto e da precificação e passa a contar como custo fixo de envio. Se estiver em alguma fórmula, o sistema avisa e não muda.')) return;
+      try { const r = await rpc('gestao_converter_produto_para_embalagem_envio', { p_id: id }); await carregar(); aviso('"' + r.nome + '" agora é embalagem de envio (' + r.itens_atualizados + ' item(ns) de nota atualizados).' + (r.uniu_com_existente ? ' Foi unida a um cadastro que já existia.' : ''), true); desenhar(); } catch (er) { aviso(er.message, false); }
+    },
+    async paraDespesa(origem) {
+      const pref = origem === 'materia_prima' ? 'mp' : 'em', reg = origem === 'materia_prima' ? window.__mpEdit : window.__embEdit, cat = $(pref + '-dcat').value, rec = $(pref + '-drec').checked;
+      if (!confirm('Mudar "' + reg.nome + '" para DESPESA (' + CAT_DESP[cat] + (rec ? ', contínua' : ', pontual') + ')?' + String.fromCharCode(10, 10) + 'Os itens de nota ligados viram despesas e este cadastro é removido.')) return;
+      try { const r = await rpc('gestao_converter_para_despesa', { p: { origem, id: reg.id, categoria: cat, recorrente: rec } }); window.__mpEdit = null; window.__embEdit = null; await carregar(); aviso('"' + r.nome + '" virou despesa (' + r.despesas_criadas + ' lançamento(s)).', true); desenhar(); } catch (er) { aviso(er.message, false); }
+    },
+    async excluirEmb(id) {
+      const m = D.embs.find(x => x.id === id);
+      if (!confirm('Excluir a embalagem "' + (m ? m.nome : '') + '"? Itens de nota ligados a ela voltam para Pendentes.')) return;
+      try { const r = await rpc('gestao_excluir_embalagem_envio', { p_id: id }); await carregar(); aviso('Embalagem excluída.' + (r.itens_voltaram_para_pendente ? ' ' + r.itens_voltaram_para_pendente + ' item(ns) voltaram para Pendentes.' : ''), true); desenhar(); } catch (er) { aviso(er.message, false); }
+    },
     async excluirNota(id) {
       const n = D.notas.find(x => x.id === id);
       if (!confirm('Excluir a nota ' + (n ? n.numero : '') + ' e as despesas criadas por ela? O custo atual das matérias-primas não volta atrás.')) return;
@@ -2603,7 +2664,14 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
     editarMp(id) { window.__mpEdit = id ? Object.assign({}, D.mps.find(m => m.id === id)) : { categoria: 'ingrediente', unidade_base: 'g', cadastro_completo: true, ativo: true }; desenhar(); },
     async salvarMp() {
       const g = k => $('mp-' + k), p = { id: window.__mpEdit.id || null, nome: g('nome').value, tipo: g('tipo').value, categoria: g('categoria').value, unidade_base: g('base').value,
-        custo_unitario_atual: g('custo').value.replace(',', '.'), fornecedor_nome: g('forn').value, cadastro_completo: g('ok').checked, observacao: g('obs').value, ativo: g('ativo').checked };
+        custo_unitario_atual: g('custo').value.replace(',', '.'), fornecedor_nome: g('forn').value, cadastro_completo: g('ok').checked, observacao: g('obs').value, ativo: g('ativo').checked, data_ultima_compra: g('data').value };
+      if (!p.id) {   // cadastro novo com o mesmo nome e fornecedor de um que já existe: pergunta se quer atualizar o valor e a data
+        const ex = D.mps.find(m => low(m.nome) === low(p.nome) && low(m.fornecedor_nome) === low(p.fornecedor_nome));
+        if (ex) {
+          if (!confirm('Já existe "' + ex.nome + '"' + (ex.fornecedor_nome ? ' (' + ex.fornecedor_nome + ')' : '') + ' com custo ' + un4(ex.custo_unitario_atual) + '/' + ex.unidade_base + (ex.data_ultima_compra ? ' em ' + dataBR(ex.data_ultima_compra) : '') + '.' + String.fromCharCode(10, 10) + 'Atualizar o cadastro existente com o novo valor' + (p.data_ultima_compra ? ' e a data ' + dataBR(p.data_ultima_compra) : '') + '? (Cancelar = não salvar)')) return;
+          p.id = ex.id;
+        }
+      }
       try { await rpc('gestao_salvar_materia_prima', { p }); window.__mpEdit = null; await carregar(); aviso('Matéria-prima salva.', true); desenhar(); } catch (er) { aviso(er.message, false); }
     },
     async salvarDespesa() {
@@ -2628,7 +2696,7 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
         ${n.difal ? `<label class="toggle-label"><input type="checkbox" ${e.ratear ? 'checked' : ''} onchange="PetitNF.ratear(${i},this.checked)"> somar o DIFAL (${brl(n.difal)}) ao custo</label>` : ''}</div>
         ${e.ja ? `<div class="alert" style="margin:10px 16px">Esta nota já foi importada em ${dataBR(e.ja.criado_em)}. Não é possível importar de novo.</div>` : ''}
         <table><thead><tr><th>Item da nota</th><th>Custo</th><th>Destino</th><th>Cadastro</th><th>Conteúdo</th></tr></thead><tbody>
-        ${e.linhas.map((r, j) => editor('l', i, j, r, custos[j], r.item.quantidade)).join('')}</tbody></table>
+        ${e.linhas.map((r, j) => editor('l', i, j, r, custos[j], r.item.quantidade, { cnpj: n.fornecedor.cnpj, data: n.data_emissao })).join('')}</tbody></table>
         <div style="padding:12px 16px;display:flex;gap:8px"><button class="btn btn-primary" ${e.ja ? 'disabled' : ''} onclick="PetitNF.importar(${i})">Confirmar e importar</button><button class="btn btn-outline" onclick="PetitNF.descartar(${i})">Descartar</button></div></div>`;
     });
     return h;
@@ -2641,12 +2709,14 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
         <td>${its.length}${p ? ' · <span class="badge badge-pink">' + p + ' pendente(s)</span>' : ''}</td><td><button class="btn-icon" title="Excluir nota" onclick="PetitNF.excluirNota('${n.id}')">🗑</button></td></tr>`; }).join('')}</tbody></table></div>`;
   }
   function tabPendentes() {
-    if (!pend.length) return '<div class="empty-state">Nenhum item pendente. 🎉</div>';
+    const ign = D.itens.filter(i => i.destino === 'ignorado');
+    const blocoIgn = ign.length ? `<details style="margin-top:16px"><summary class="td-muted">Itens ignorados (${ign.length}) — continuam na nota, mas não viram matéria-prima nem despesa</summary><div class="table-card" style="margin-top:8px"><table><tbody>${ign.map(i => { const nt = D.notas.find(n => n.id === i.nota_fiscal_id) || {}; return `<tr><td>${esc(i.descricao)}<div class="td-muted">NF ${esc(nt.numero || '')} · ${esc(nt.fornecedor_fantasia || nt.fornecedor_nome || '')}</div></td><td>${brl(i.custo_total)}</td><td><button class="btn btn-outline btn-sm" onclick="PetitNF.ignorar('${i.id}', false)">Desfazer</button></td></tr>`; }).join('')}</tbody></table></div></details>` : '';
+    if (!pend.length) return '<div class="empty-state">Nenhum item pendente. 🎉</div>' + blocoIgn;
     return `<p class="td-muted">Estes itens não foram reconhecidos. Escolha o destino e confirme — a escolha fica lembrada para as próximas notas do mesmo fornecedor.</p>
       <div class="table-card"><table><thead><tr><th>Item da nota</th><th>Custo</th><th>Destino</th><th>Cadastro</th><th>Conteúdo</th><th></th></tr></thead><tbody>${pend.map((r, j) => {
       const nota = D.notas.find(n => n.id === r.item.nota_fiscal_id) || {};
-      return editor('p', 0, j, Object.assign({}, r, { item: Object.assign({}, r.item, { descricao: r.item.descricao + ' (NF ' + (nota.numero || '') + ' · ' + (nota.fornecedor_fantasia || nota.fornecedor_nome || '') + ')' }) }), Number(r.item.custo_total), Number(r.item.quantidade_comprada))
-        .replace(/<\/tr>$/, `<td><button class="btn btn-primary btn-sm" onclick="PetitNF.confirmarPendente(${j})">Confirmar</button></td></tr>`); }).join('')}</tbody></table></div>`;
+      return editor('p', 0, j, Object.assign({}, r, { item: Object.assign({}, r.item, { descricao: r.item.descricao + ' (NF ' + (nota.numero || '') + ' · ' + (nota.fornecedor_fantasia || nota.fornecedor_nome || '') + ')' }) }), Number(r.item.custo_total), Number(r.item.quantidade_comprada), { cnpj: nota.fornecedor_cnpj, data: nota.data_emissao })
+        .replace(/<\/tr>$/, `<td style="white-space:nowrap"><button class="btn btn-primary btn-sm" onclick="PetitNF.confirmarPendente(${j})">Confirmar</button> <button class="btn btn-outline btn-sm" title="Tira da lista de pendentes; o item continua na nota" onclick="PetitNF.ignorar('${r.id}', true)">Ignorar</button></td></tr>`); }).join('')}</tbody></table></div>` + blocoIgn;
   }
   function tabMp() {
     const f = ($('nf-filtro') || {}).value || '', t = f.toLowerCase();
@@ -2659,14 +2729,25 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
       <div class="field"><label>Categoria</label><select id="mp-categoria"><option value="ingrediente"${e.categoria === 'ingrediente' ? ' selected' : ''}>Ingrediente</option><option value="embalagem_produto"${e.categoria === 'embalagem_produto' ? ' selected' : ''}>Embalagem do produto</option></select></div>
       <div class="field"><label>Unidade base</label><select id="mp-base">${['g', 'ml', 'un'].map(u => `<option${u === e.unidade_base ? ' selected' : ''}>${u}</option>`).join('')}</select></div>
       <div class="field"><label>Custo atual por unidade base (R$)</label><input id="mp-custo" value="${e.custo_unitario_atual == null ? '' : e.custo_unitario_atual}"></div>
+      <div class="field"><label>Data da compra (opcional)</label><input type="date" id="mp-data" value="${esc(d10(e.data_ultima_compra))}"></div>
       <div class="field"><label>Observação</label><input id="mp-obs" value="${esc(e.observacao)}"></div></div>
       <label class="toggle-label"><input type="checkbox" id="mp-ok" ${e.cadastro_completo ? 'checked' : ''}> cadastro completo</label> <label class="toggle-label"><input type="checkbox" id="mp-ativo" ${e.ativo !== false ? 'checked' : ''}> ativa</label>
-      <div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" onclick="PetitNF.salvarMp()">Salvar</button><button class="btn btn-outline btn-sm" onclick="window.__mpEdit=null;PetitNF.aba('mp')">Cancelar</button></div></div>`;
+      ${e.id ? `<div style="margin-top:14px;padding:10px 12px;border:1px dashed var(--border2);border-radius:8px"><b>Mudar para despesa</b><div class="td-muted">Os itens de nota ligados a este cadastro viram despesas (data e valor de cada nota) e este cadastro deixa de existir. Use para coisas como material de escritório, curso, equipamento.</div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px"><select id="mp-dcat" style="width:auto">${Object.entries(CAT_DESP).map(([a, b]) => `<option value="${a}"${a === 'material_escritorio' ? ' selected' : ''}>${b}</option>`).join('')}</select><label class="toggle-label"><input type="checkbox" id="mp-drec" checked> despesa contínua (recorrente: entra no custo fixo mensal)</label><button class="btn btn-outline btn-sm" onclick="PetitNF.paraDespesa('materia_prima')">Converter em despesa</button></div></div>` : ''}<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" onclick="PetitNF.salvarMp()">Salvar</button><button class="btn btn-outline btn-sm" onclick="window.__mpEdit=null;PetitNF.aba('mp')">Cancelar</button></div></div>`;
     h += lista.length ? `<div class="table-card"><table><thead><tr><th>Matéria-prima</th><th>Tipo</th><th>Fornecedor</th><th>Custo atual</th><th>Última compra</th><th></th></tr></thead><tbody>${lista.map(m => `<tr${m.ativo === false ? ' style="opacity:.5"' : ''}>
       <td class="td-name">${esc(m.nome)}<div class="td-muted">${m.categoria === 'embalagem_produto' ? 'embalagem do produto' : 'ingrediente'}${m.cadastro_completo ? '' : ' · <span class="badge badge-pink">cadastro incompleto</span>'}</div></td>
       <td>${esc(m.tipo || '—')}</td><td>${esc(m.fornecedor_nome || '—')}</td><td>${un4(m.custo_unitario_atual)}/${m.unidade_base}</td><td>${dataBR(m.data_ultima_compra)}</td>
-      <td><button class="btn-icon" onclick="PetitNF.editarMp('${m.id}')">✏️</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty-state">Nenhuma matéria-prima.</div>';
-    if (D.embs.length) h += `<h3 style="margin:18px 0 8px">Embalagens de envio</h3><div class="table-card"><table><thead><tr><th>Item</th><th>Custo atual</th><th>Última compra</th></tr></thead><tbody>${D.embs.map(m => `<tr><td>${esc(m.nome)}</td><td>${un4(m.custo_unitario_atual)}/${m.unidade_base}</td><td>${dataBR(m.data_ultima_compra)}</td></tr>`).join('')}</tbody></table></div>`;
+      <td style="white-space:nowrap"><button class="btn-icon" title="Editar" onclick="PetitNF.editarMp('${m.id}')">✏️</button> ${m.categoria === 'embalagem_produto' ? `<button class="btn btn-outline btn-sm" title="Passa para embalagem de ENVIO: entra no custo fixo (sai do custo do produto)" onclick="PetitNF.paraEnvio('${m.id}')">→ Embalagem de envio</button> ` : ''}<button class="btn-icon" title="Excluir" onclick="PetitNF.excluirMp('${m.id}')">🗑</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty-state">Nenhuma matéria-prima.</div>';
+    const ee = window.__embEdit;
+    h += `<div class="table-toolbar" style="margin-top:22px"><h3 style="margin:0">Embalagens de envio</h3><button class="btn btn-primary btn-sm" onclick="PetitNF.editarEmb()">+ Nova embalagem</button></div>`;
+    if (ee) h += `<div class="table-card" style="padding:16px;margin-bottom:12px"><b>${ee.id ? 'Editar' : 'Nova'} embalagem de envio</b><div class="grid2f" style="margin-top:8px">
+      <div class="field"><label>Nome</label><input id="em-nome" value="${esc(ee.nome)}"></div>
+      <div class="field"><label>Unidade base</label><select id="em-base">${['un', 'g', 'ml'].map(u => `<option${u === (ee.unidade_base || 'un') ? ' selected' : ''}>${u}</option>`).join('')}</select></div>
+      <div class="field"><label>Custo atual por unidade base (R$)</label><input id="em-custo" value="${ee.custo_unitario_atual == null ? '' : ee.custo_unitario_atual}"></div>
+      <div class="field"><label>Data da compra (opcional)</label><input type="date" id="em-data" value="${esc(d10(ee.data_ultima_compra))}"></div>
+      <div class="field" style="grid-column:1/-1"><label>Observação</label><input id="em-obs" value="${esc(ee.observacao)}"></div></div>
+      <label class="toggle-label"><input type="checkbox" id="em-ativo" ${ee.ativo !== false ? 'checked' : ''}> ativa</label>
+      ${ee.id ? `<div style="margin-top:14px;padding:10px 12px;border:1px dashed var(--border2);border-radius:8px"><b>Mudar para despesa</b><div class="td-muted">Os itens de nota ligados a este cadastro viram despesas (data e valor de cada nota) e este cadastro deixa de existir. Use para coisas como material de escritório, curso, equipamento.</div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px"><select id="em-dcat" style="width:auto">${Object.entries(CAT_DESP).map(([a, b]) => `<option value="${a}"${a === 'material_escritorio' ? ' selected' : ''}>${b}</option>`).join('')}</select><label class="toggle-label"><input type="checkbox" id="em-drec" checked> despesa contínua (recorrente: entra no custo fixo mensal)</label><button class="btn btn-outline btn-sm" onclick="PetitNF.paraDespesa('embalagem_envio')">Converter em despesa</button></div></div>` : ''}<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" onclick="PetitNF.salvarEmb()">Salvar</button><button class="btn btn-outline btn-sm" onclick="window.__embEdit=null;PetitNF.aba('mp')">Cancelar</button></div></div>`;
+    h += D.embs.length ? `<div class="table-card"><table><thead><tr><th>Item</th><th>Custo atual</th><th>Última compra</th><th></th></tr></thead><tbody>${D.embs.map(m => `<tr${m.ativo === false ? ' style="opacity:.5"' : ''}><td>${esc(m.nome)}${m.observacao ? '<div class="td-muted">' + esc(m.observacao) + '</div>' : ''}</td><td>${un4(m.custo_unitario_atual)}/${m.unidade_base}</td><td>${dataBR(m.data_ultima_compra)}</td><td style="white-space:nowrap"><button class="btn-icon" title="Editar" onclick="PetitNF.editarEmb('${m.id}')">✏️</button> <button class="btn btn-outline btn-sm" title="Passa para embalagem de PRODUTO: entra no custo do produto e na precificação (em vez do custo fixo)" onclick="PetitNF.paraProduto('${m.id}')">→ Embalagem de produto</button> <button class="btn-icon" title="Excluir" onclick="PetitNF.excluirEmb('${m.id}')">🗑</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty-state">Nenhuma embalagem de envio.</div>';
     return h;
   }
   function tabDesp() {
@@ -2708,6 +2789,293 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
       g0(sec2);
       if (sec2 === 'notas') { $('nav-notas').classList.add('active'); carregar().then(desenhar).catch(e => { $('nf-conteudo').innerHTML = '<div class="alert">Não foi possível carregar: ' + esc(e.message) + '<br>Se for a primeira vez, o SQL da Fase 6 precisa ter sido rodado no Supabase.</div>'; }); }
     };
+  }
+  montar();
+})();
+
+</script>
+<script>
+// Leitor de receita do SoapCalc (texto do PDF impresso) — Petit Sabó, Fase 7.
+// Funciona no navegador e no Node. Uso:  const r = SoapCalc.parse(textoDoPdf);
+// Devolve { nome, peso_total_g, itens:[{nome, quantidade, unidade, grupo, original, obs}], observacao, avisos }
+(function (raiz) {
+  const num = s => parseFloat(String(s).replace(',', '.'));
+  const semAcento = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  // nomes em inglês do SoapCalc → nome usado no cadastro (editável na tela)
+  const TRAD = {
+    'castor oil': 'Óleo de mamona', 'coconut oil': 'Óleo de coco', 'palm oil': 'Óleo de palma', 'sunflower oil': 'Óleo de girassol',
+    'almond oil': 'Óleo de amêndoas doce', 'palm kernel oil': 'Óleo de palmiste', 'cupuacu butter': 'Manteiga de cupuaçu', 'olive oil': 'Óleo de oliva',
+    'shea butter': 'Manteiga de karité', 'cocoa butter': 'Manteiga de cacau', 'soybean oil': 'Óleo de soja', 'canola oil': 'Óleo de canola',
+    'avocado oil': 'Óleo de abacate', 'babassu oil': 'Óleo de babaçu', 'jojoba oil': 'Óleo de jojoba', 'rice bran oil': 'Óleo de farelo de arroz',
+    'sesame oil': 'Óleo de gergelim', 'macadamia nut oil': 'Óleo de macadâmia', 'grapeseed oil': 'Óleo de semente de uva', 'cocoa butter ': 'Manteiga de cacau',
+    'mango butter': 'Manteiga de manga', 'murumuru butter': 'Manteiga de murumuru', 'beeswax': 'Cera de abelha', 'lard': 'Banha de porco', 'tallow': 'Sebo'
+  };
+  function traduz(nomeEn) {
+    const t = String(nomeEn || '').trim().toLowerCase();
+    if (TRAD[t]) return TRAD[t];
+    const base = t.split(',')[0].trim();
+    return TRAD[base] || String(nomeEn).trim();
+  }
+
+  function parse(texto) {
+    const linhas = String(texto || '').split(/\r?\n/).map(l => l.replace(/[\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean);   // o PDF traz caracteres de controle (caixinhas) entre as colunas
+    if (!linhas.length) throw new Error('O arquivo está vazio.');
+    const r = { nome: linhas[0], peso_total_g: null, itens: [], observacao: '', avisos: [] };
+    const oleos = [], extras = []; let agua = null, soda = null, fragr = null, emOleos = false, emAdit = false; const obs = [];
+    for (const l of linhas.slice(1)) {
+      let m;
+      if (/^Additives\b/i.test(l)) { emAdit = true; emOleos = false; continue; }
+      if (emAdit) {
+        if ((m = l.match(/^(\d+(?:[.,]\d+)?)\s*(kg|g|ml)\s+(.+)$/i))) {
+          let q = num(m[1]), u = m[2].toLowerCase(), resto = m[3].trim();
+          if (u === 'kg') { q *= 1000; u = 'g'; }
+          let fase = ''; const f = resto.match(/\s+(na|no)\s+(lixivia|agua|água|oleo|óleo|oleos|óleos)\b.*$/i);
+          if (f) { fase = f[0].trim(); resto = resto.slice(0, f.index).trim(); }
+          const semBlend = resto.replace(/\s+blend$/i, '').trim();
+          if (semBlend !== resto) { obs.push('blend'); resto = semBlend; }
+          extras.push({ nome: resto, quantidade: q, unidade: u, grupo: 'aditivo', original: l, obs: fase });
+        } else obs.push(l);
+        continue;
+      }
+      if (/^#\s*Oil\/Fat/i.test(l)) { emOleos = true; continue; }
+      if (/^Totals\b/i.test(l)) { emOleos = false; continue; }
+      if (emOleos && (m = l.match(/^\d+\s+(.+?)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)$/))) { oleos.push({ nome: traduz(m[1]), quantidade: num(m[5]), unidade: 'g', grupo: 'óleo', original: m[1], obs: m[2] + '%' }); continue; }
+      if ((m = l.match(/^Water\s+[\d.]+\s+[\d.]+\s+([\d.]+)$/i))) { agua = num(m[1]); continue; }
+      if ((m = l.match(/^Lye\s*-\s*(\w+)\s+[\d.]+\s+[\d.]+\s+([\d.]+)$/i))) { soda = { q: num(m[2]), t: m[1].toUpperCase() }; continue; }
+      if ((m = l.match(/^Fragrance\s+[\d.]+\s+[\d.]+\s+([\d.]+)$/i))) { fragr = num(m[1]); continue; }
+      if ((m = l.match(/^Soap weight.*?([\d.]+)$/i))) { r.peso_total_g = num(m[1]); continue; }
+    }
+    r.itens.push(...oleos);
+    if (soda && soda.q > 0) r.itens.push({ nome: soda.t === 'KOH' ? 'Potassa cáustica (KOH)' : 'Soda cáustica (NaOH)', quantidade: soda.q, unidade: 'g', grupo: 'soda', original: 'Lye - ' + soda.t, obs: '' });
+    if (agua && agua > 0) r.itens.push({ nome: 'Água destilada', quantidade: agua, unidade: 'g', grupo: 'água', original: 'Water', obs: '' });
+    if (fragr && fragr > 0) r.itens.push({ nome: 'Fragrância', quantidade: fragr, unidade: 'g', grupo: 'aditivo', original: 'Fragrance', obs: '' });
+    r.itens.push(...extras);
+    r.observacao = [...new Set(obs)].join('; ');
+    if (!oleos.length) r.avisos.push('Não encontrei a tabela de óleos — confira se é uma receita do SoapCalc.');
+    if (!r.peso_total_g) r.avisos.push('Não encontrei o peso total da massa.');
+    const somaOleos = oleos.reduce((a, b) => a + b.quantidade, 0);
+    if (oleos.length && !/total oil weight\s+([\d.]+)/i.test(texto)) r.avisos.push('Total de óleos: ' + somaOleos + ' g (não achei a linha "Total oil weight").');
+    return r;
+  }
+
+  const SoapCalc = { parse, traduz, semAcento };
+  if (typeof module !== 'undefined' && module.exports) module.exports = SoapCalc; else raiz.SoapCalc = SoapCalc;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+// Leitor das abas de fórmula da planilha "PRECIFICAÇÃO - ATACADO E VAREJO" — Petit Sabó, Fase 7.
+// Funciona no navegador e no Node. Recebe as linhas da aba (matriz de células, como o SheetJS entrega com header:1).
+// Cada aba de produto tem o bloco  MATERIAIS | PESO (G/ML) | PREÇO/Unitário | Unidade | Total  e a pergunta "QUANTAS UNIDADES ...?".
+//   peso = tamanho da embalagem comprada, preço = valor dessa embalagem, Unidade = quantidade usada em UMA receita.
+// Uso:  const r = Precificacao.parse(linhas, 'COLD PROCESS');  → { nome, unidades, itens:[{nome, quantidade, unidade, custo, embalagem, preco_embalagem}], avisos, total_planilha }
+(function (raiz) {
+  const sa = s => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  const num = v => { if (typeof v === 'number') return v; const n = parseFloat(String(v == null ? '' : v).replace(/\./g, '').replace(',', '.')); return isNaN(n) ? 0 : n; };
+  const ABAS_IGNORADAS = /^(atacado|varejo)$/;
+
+  function ehAbaDeProduto(nome) { return !ABAS_IGNORADAS.test(sa(nome)); }
+
+  function parse(rows, nomeAba) {
+    const r = { nome: String(nomeAba || '').trim(), unidades: null, itens: [], avisos: [], total_planilha: null };
+    let h = -1, c0 = 0;
+    for (let i = 0; i < rows.length && h < 0; i++) for (let c = 0; c <= 2; c++) if (sa(rows[i] && rows[i][c]) === 'materiais') { h = i; c0 = c; break; }
+    if (h < 0) throw new Error('Não encontrei a tabela "MATERIAIS" nesta aba.');
+    for (let i = 0; i < rows.length; i++) {
+      const linha = rows[i] || [];
+      const k = linha.findIndex(x => /quantas unidades/.test(sa(x)));
+      if (k >= 0) { const v = linha.slice(k + 1).map(num).find(x => x > 0); if (v) { r.unidades = v; break; } }
+    }
+    if (!r.unidades) r.avisos.push('Não achei "QUANTAS UNIDADES" — informe o rendimento da receita.');
+    for (let i = h + 1; i < rows.length; i++) {
+      const l = rows[i] || [], nome = String(l[c0] == null ? '' : l[c0]).trim();
+      if (/^total$/.test(sa(nome))) { r.total_planilha = num(l[c0 + 4]) || null; break; }
+      if (/preco de venda/.test(sa(nome))) break;
+      if (!nome) continue;
+      const peso = num(l[c0 + 1]), preco = num(l[c0 + 2]), qtd = num(l[c0 + 3]);
+      if (!(qtd > 0)) { r.avisos.push('"' + nome + '": sem quantidade na receita — ignorado.'); continue; }
+      r.itens.push({ nome, quantidade: qtd, unidade: 'g', custo: peso > 0 && preco > 0 ? preco / peso : null, embalagem: peso || null, preco_embalagem: preco || null });
+    }
+    if (!r.itens.length) r.avisos.push('Nenhum ingrediente com quantidade nesta aba.');
+    return r;
+  }
+
+  const Precificacao = { parse, ehAbaDeProduto };
+  if (typeof module !== 'undefined' && module.exports) module.exports = Precificacao; else raiz.Precificacao = Precificacao;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+// ═══════════ TELA "FÓRMULAS" (Fase 7) ═══════════
+// Receitas por SKU, versionadas. Entradas: PDF do SoapCalc, aba da planilha de precificação (.xlsx), texto colado ou digitação.
+// Depende de: SoapCalc (soapcalc.js), Precificacao (precificacao.js) e window.__gestao.sb() (camada_supabase.js). Nada é gravado sem você salvar.
+(function () {
+  const $ = id => document.getElementById(id);
+  const sb = () => window.__gestao.sb();
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const brl = n => (n == null || n === '' || isNaN(n)) ? '—' : Number(n).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const un4 = n => (n == null || isNaN(n)) ? '—' : 'R$ ' + Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  const dataBR = d => d ? String(d).slice(0, 10).split('-').reverse().join('/') : '';
+  const nz = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const numero = v => { const n = parseFloat(String(v == null ? '' : v).replace(',', '.')); return isNaN(n) ? null : n; };
+  const PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js', PDFJS_WORKER = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+  const XLSXJS = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+  let D = { formulas: [], itens: [], mps: [], custos: [], produtos: [] }, aba = 'lista', F = null, verSku = null, planilha = null;
+
+  // ---------- dados ----------
+  async function ler(t, col, asc) {
+    let q = sb().from(t).select('*'); if (col) q = q.order(col, { ascending: asc !== false });
+    const { data, error } = await q.range(0, 4999); if (error) throw new Error(t + ': ' + error.message); return data || [];
+  }
+  async function carregar() {
+    const [formulas, itens, mps, custos, produtos] = await Promise.all([ler('formulas', 'criado_em', false), ler('formula_itens', 'ordem'), ler('materias_primas', 'nome'), ler('formulas_custo'), ler('produtos', 'sku')]);
+    D = { formulas, itens, mps, custos, produtos };
+  }
+  async function rpc(nome, args) { const { data, error } = await sb().rpc(nome, args); if (error) throw new Error(error.message); return data; }
+  function aviso(t, ok) { const d = document.createElement('div'); d.textContent = t; d.style.cssText = 'position:fixed;bottom:44px;right:20px;max-width:440px;background:' + (ok === false ? '#A32D2D' : '#2e7d32') + ';color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;z-index:99998;box-shadow:0 4px 16px rgba(0,0,0,.2)'; document.body.appendChild(d); setTimeout(() => d.remove(), 6000); }
+  function script(src) { return new Promise((ok, no) => { if ([].some.call(document.scripts, s => s.src === src)) return ok(); const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('Não foi possível carregar a biblioteca (sem internet?).')); document.head.appendChild(s); }); }
+
+  // ---------- casamento com matérias-primas ----------
+  function acharMp(nome) {
+    const n = nz(nome); if (!n) return '';
+    const ex = D.mps.filter(m => nz(m.nome) === n); if (ex.length === 1) return ex[0].id; if (ex.length > 1) return '';
+    const tk = n.split(' ').filter(t => t.length > 2); if (tk.length < 2) return '';   // nome de uma palavra só (ex.: "essência") só casa se for idêntico
+    const c = D.mps.filter(m => tk.every(t => nz(m.nome).includes(t))); return c.length === 1 ? c[0].id : '';
+  }
+  const mpDe = id => D.mps.find(m => m.id === id);
+  const novoF = () => ({ id: null, sku: '', nome: '', unidades: '', peso: '', obs: '', origem: 'manual', itens: [] });
+  function linha(i) { const mp = i.materia_prima_id || i.mp_id || acharMp(i.nome); return { nome: i.nome || '', mp_id: mp, tipo: i.tipo || '', qtd: i.quantidade == null ? '' : String(i.quantidade), un: i.unidade || 'g', grupo: i.grupo || '', custo: i.custo == null ? '' : String(+Number(i.custo).toFixed(6)), obs: i.obs || '' }; }
+  function custoLinha(l) { const mp = l.mp_id ? mpDe(l.mp_id) : null; if (mp && mp.custo_unitario_atual != null) return Number(mp.custo_unitario_atual); return numero(l.custo); }
+  function totais() {
+    let tot = 0, sem = 0; F.itens.forEach(l => { const c = custoLinha(l), q = numero(l.qtd); if (c == null) sem++; else if (q) tot += c * q; });
+    const un = numero(F.unidades); return { tot, sem, un: un > 0 ? tot / un : null };
+  }
+
+  // ---------- leitura de PDF / planilha / texto ----------
+  async function textoPdf(file) {
+    await script(PDFJS); window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+    const doc = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise; let out = [];
+    for (let p = 1; p <= doc.numPages; p++) {
+      const its = (await (await doc.getPage(p)).getTextContent()).items.filter(x => String(x.str).replace(/[\x00-\x1f]/g, '').trim()).map(x => ({ s: x.str, x: x.transform[4], y: x.transform[5] }));
+      its.sort((a, b) => b.y - a.y || a.x - b.x); const ls = [];
+      its.forEach(it => { const l = ls.find(z => Math.abs(z.y - it.y) < 3); if (l) l.it.push(it); else ls.push({ y: it.y, it: [it] }); });
+      ls.sort((a, b) => b.y - a.y).forEach(l => out.push(l.it.sort((a, b) => a.x - b.x).map(z => z.s.trim()).join(' ')));
+    }
+    return out.join('\n');
+  }
+  function preencher(r, origem, nomeSugerido) {
+    F = novoF(); F.origem = origem; F.nome = nomeSugerido || r.nome || ''; F.unidades = r.unidades ? String(r.unidades) : ''; F.peso = r.peso_total_g ? String(r.peso_total_g) : ''; F.obs = r.observacao || '';
+    F.itens = r.itens.map(i => { const l = linha(i); if (/^agua destilada/.test(nz(l.nome)) && l.custo === '' && !l.mp_id) l.custo = '0'; return l; });
+    if (r.avisos && r.avisos.length) aviso(r.avisos.join(' '), false);
+    aba = 'editor'; desenhar();
+  }
+  const A = {
+    async pdf(files) {
+      if (!files.length) return; try { const r = SoapCalc.parse(await textoPdf(files[0])); preencher(r, 'soapcalc_pdf'); } catch (e) { aviso('Não consegui ler o PDF: ' + e.message, false); }
+    },
+    texto() { try { const r = SoapCalc.parse($('fm-texto').value); preencher(r, 'soapcalc_pdf'); } catch (e) { aviso(e.message, false); } },
+    async xlsx(files) {
+      if (!files.length) return;
+      try { await script(XLSXJS); const wb = window.XLSX.read(await files[0].arrayBuffer(), { type: 'array' });
+        planilha = wb.SheetNames.filter(n => Precificacao.ehAbaDeProduto(n)).map(n => { try { const r = Precificacao.parse(window.XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '', raw: true }), n); return { aba: n, r }; } catch (e) { return { aba: n, erro: e.message }; } });
+        desenhar(); } catch (e) { aviso('Não consegui ler a planilha: ' + e.message, false); }
+    },
+    aba(i) { const p = planilha[i]; preencher(p.r, 'manual', p.aba.trim()); }
+  };
+
+  // ---------- editor ----------
+  function linhaHtml(l, j) {
+    const mp = l.mp_id ? mpDe(l.mp_id) : null, tem = mp && mp.custo_unitario_atual != null, c = custoLinha(l), q = numero(l.qtd);
+    return `<tr><td><input value="${esc(l.nome)}" ${mp ? 'disabled' : ''} placeholder="Ingrediente" onchange="PetitFM.set(${j},'nome',this.value)">
+        <select style="margin-top:4px" onchange="PetitFM.set(${j},'mp_id',this.value)"><option value="">${mp ? 'Trocar…' : 'Nova matéria-prima (ou mesma de mesmo nome)'}</option>${D.mps.map(m => `<option value="${m.id}"${m.id === l.mp_id ? ' selected' : ''}>${esc(m.nome)}${m.fornecedor_nome ? ' — ' + esc(m.fornecedor_nome) : ''}</option>`).join('')}</select>
+        ${!mp ? `<input value="${esc(l.tipo)}" placeholder="Tipo (óleo, essência, aditivo…)" style="margin-top:4px" onchange="PetitFM.set(${j},'tipo',this.value)">` : ''}</td>
+      <td><input value="${esc(l.qtd)}" style="width:90px" onchange="PetitFM.set(${j},'qtd',this.value)"><select style="width:64px;margin-top:4px" onchange="PetitFM.set(${j},'un',this.value)">${['g', 'ml', 'un'].map(u => `<option${u === l.un ? ' selected' : ''}>${u}</option>`).join('')}</select></td>
+      <td>${tem ? `<b>${un4(mp.custo_unitario_atual)}</b>/${mp.unidade_base}<div class="td-muted">custo já cadastrado</div>${numero(l.custo) != null && Math.abs(numero(l.custo) - Number(mp.custo_unitario_atual)) > 0.000001 ? `<div style="color:#B26A00;font-size:11px">⚠ a planilha usava ${un4(numero(l.custo))}/${l.un}. Vale o custo cadastrado; para mudar, edite a matéria-prima.</div>` : ''}` : `<input value="${esc(l.custo)}" style="width:110px" placeholder="R$ por ${l.un}" onchange="PetitFM.set(${j},'custo',this.value)"><div class="td-muted">${c == null ? '<span style="color:#A32D2D">sem custo</span>' : 'R$ por ' + l.un}</div>`}</td>
+      <td>${c != null && q ? brl(c * q) : '—'}</td><td><button class="btn-icon" title="Remover" onclick="PetitFM.rem(${j})">✕</button></td></tr>`;
+  }
+  function editor() {
+    const t = totais(), ant = F.sku ? D.formulas.filter(f => f.sku === F.sku) : [], ver = F.id ? 'Editando: ao salvar, cria a versão ' + (Math.max(0, ...D.formulas.filter(f => f.id === F.id || (F.sku ? f.sku === F.sku : nz(f.nome) === nz(F.nome))).map(f => f.versao)) + 1) : (ant.length ? 'Já existe fórmula para este SKU: ao salvar, cria a versão ' + (Math.max(...ant.map(f => f.versao)) + 1) : 'Nova fórmula (versão 1)');
+    return `<div class="table-card" style="padding:16px;margin-bottom:12px"><div class="grid2f">
+      <div class="field"><label>Produto (SKU)</label><select onchange="PetitFM.campo('sku',this.value)"><option value="">(produto ainda não cadastrado)</option>${D.produtos.map(p => `<option value="${esc(p.sku)}"${p.sku === F.sku ? ' selected' : ''}>${esc(p.sku)} — ${esc(p.nome)}</option>`).join('')}</select></div>
+      <div class="field"><label>Nome da fórmula</label><input value="${esc(F.nome)}" onchange="PetitFM.campo('nome',this.value)"></div>
+      <div class="field"><label>Unidades que saem de UMA receita</label><input value="${esc(F.unidades)}" placeholder="ex.: 9" onchange="PetitFM.campo('unidades',this.value)"></div>
+      <div class="field"><label>Peso total da massa (g, opcional)</label><input value="${esc(F.peso)}" onchange="PetitFM.campo('peso',this.value)"></div>
+      <div class="field" style="grid-column:1/-1"><label>Observações</label><input value="${esc(F.obs)}" onchange="PetitFM.campo('obs',this.value)"></div></div>
+      <div class="td-muted">${ver}</div></div>
+      <div class="table-card"><table><thead><tr><th>Ingrediente</th><th>Quantidade (uma receita)</th><th>Custo por unidade</th><th>Subtotal</th><th></th></tr></thead><tbody>${F.itens.map(linhaHtml).join('') || '<tr><td colspan="5" class="td-muted">Nenhum ingrediente.</td></tr>'}</tbody></table>
+      <div class="td-muted" style="padding:8px 16px">Ingrediente chamado só "Essência" é salvo como "Essência + nome da fórmula" (cada fragrância é uma matéria-prima diferente).</div><div style="padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><button class="btn btn-outline btn-sm" onclick="PetitFM.add()">+ Ingrediente</button>
+      <span><b>Custo da receita: ${brl(t.tot)}</b>${t.un != null ? ' · por unidade: <b>' + un4(t.un) + '</b>' : ''}${t.sem ? ' · <span style="color:#A32D2D">' + t.sem + ' ingrediente(s) sem custo — o total está incompleto</span>' : ''}</span></div></div>
+      <div style="margin-top:12px;display:flex;gap:8px"><button class="btn btn-primary" onclick="PetitFM.salvar()">Salvar fórmula</button><button class="btn btn-outline" onclick="PetitFM.aba('lista')">Cancelar</button></div>`;
+  }
+
+  // ---------- lista ----------
+  function lista() {
+    const ativas = D.formulas.filter(f => f.ativa), skusCom = new Set(ativas.map(f => f.sku).filter(Boolean)), ativosProd = D.produtos.filter(p => !p.oculto);
+    const semF = ativosProd.filter(p => !skusCom.has(p.sku));
+    let h = `<div class="td-muted" style="margin-bottom:10px">${ativosProd.length - semF.length} de ${ativosProd.length} produtos ativos têm fórmula.</div>`;
+    h += ativas.length ? `<div class="table-card"><table><thead><tr><th>Produto</th><th>Fórmula</th><th>Versão</th><th>Unid./receita</th><th>Custo da receita</th><th>Custo por unidade</th><th></th></tr></thead><tbody>${ativas.map(f => {
+      const c = D.custos.find(x => x.formula_id === f.id) || {}, its = D.itens.filter(i => i.formula_id === f.id).length, prod = D.produtos.find(p => p.sku === f.sku);
+      return `<tr><td>${esc(f.sku || '—')}<div class="td-muted">${esc(prod ? prod.nome : 'sem produto')}</div></td><td class="td-name">${esc(f.nome)}<div class="td-muted">${its} ingredientes${f.observacao ? ' · ' + esc(f.observacao) : ''}</div></td>
+        <td>v${f.versao} <span class="td-muted">${dataBR(f.criado_em)}</span></td><td>${Number(f.unidades_por_receita)}</td>
+        <td><b>${brl(c.custo_receita)}</b>${Number(c.itens_sem_custo) ? '<div><span class="badge badge-pink">' + c.itens_sem_custo + ' sem custo</span></div>' : ''}</td><td>${un4(c.custo_unitario)}</td>
+        <td style="white-space:nowrap"><button class="btn-icon" title="Editar (salva como nova versão)" onclick="PetitFM.editar('${f.id}')">✏️</button> <button class="btn-icon" title="Versões" onclick="PetitFM.versoes('${esc(f.sku || f.nome)}')">📜</button></td></tr>`; }).join('')}</tbody></table></div>` : '<div class="empty-state">Nenhuma fórmula cadastrada ainda. Use "Importar / nova fórmula".</div>';
+    if (verSku) {
+      const vs = D.formulas.filter(f => (f.sku || f.nome) === verSku).sort((a, b) => b.versao - a.versao);
+      h += `<h3 style="margin:18px 0 8px">Versões de ${esc(verSku)}</h3><div class="table-card"><table><thead><tr><th>Versão</th><th>Data</th><th>Situação</th><th>Custo da receita hoje</th><th></th></tr></thead><tbody>${vs.map(f => { const c = D.custos.find(x => x.formula_id === f.id) || {};
+        return `<tr><td>v${f.versao}</td><td>${dataBR(f.criado_em)}</td><td>${f.ativa ? '<span class="badge badge-pink">ativa</span>' : 'antiga'}</td><td>${brl(c.custo_receita)}</td><td style="white-space:nowrap">
+          <button class="btn-icon" title="Abrir como base de nova versão" onclick="PetitFM.editar('${f.id}')">✏️</button> ${f.ativa ? '' : `<button class="btn btn-outline btn-sm" onclick="PetitFM.ativar('${f.id}')">Reativar</button> <button class="btn-icon" title="Excluir versão" onclick="PetitFM.excluir('${f.id}')">🗑</button>`}</td></tr>`; }).join('')}</tbody></table></div>`;
+    }
+    if (semF.length) h += `<details style="margin-top:14px"><summary class="td-muted">Produtos ativos sem fórmula (${semF.length})</summary><div class="td-muted" style="margin-top:6px">${semF.map(p => esc(p.sku)).join(' · ')}</div></details>`;
+    return h;
+  }
+
+  function importar() {
+    let h = `<div class="table-card" style="padding:16px;margin-bottom:12px"><b>📄 PDF do SoapCalc</b><p class="td-muted">Lê óleos, soda, água e aditivos (Additives/Notes) e leva para o editor.</p><input type="file" accept="application/pdf,.pdf" onchange="PetitFM.pdf(this.files)"></div>
+      <div class="table-card" style="padding:16px;margin-bottom:12px"><b>📊 Planilha de precificação (.xlsx)</b><p class="td-muted">Cada aba de produto vira uma fórmula: ingredientes, quantidades da receita, custo (preço ÷ peso da embalagem) e rendimento.</p><input type="file" accept=".xlsx,.xlsm" onchange="PetitFM.xlsx(this.files)">`;
+    if (planilha) h += `<div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px">${planilha.map((p, i) => p.erro ? `<span class="td-muted">${esc(p.aba)}: ${esc(p.erro)}</span>` : `<button class="btn btn-outline btn-sm" onclick="PetitFM.abaPlanilha(${i})">${esc(p.aba.trim())} · ${p.r.itens.length} ingr. · ${p.r.unidades || '?'} un.</button>`).join('')}</div>`;
+    h += `</div><div class="table-card" style="padding:16px;margin-bottom:12px"><b>📋 Colar texto do SoapCalc</b><textarea id="fm-texto" rows="6" placeholder="Cole aqui o texto da receita"></textarea><div style="margin-top:8px"><button class="btn btn-outline btn-sm" onclick="PetitFM.texto()">Ler texto</button></div></div>
+      <div class="table-card" style="padding:16px"><b>✍️ Digitar do zero</b><div style="margin-top:8px"><button class="btn btn-outline btn-sm" onclick="PetitFM.nova()">Nova fórmula em branco</button></div></div>`;
+    return h;
+  }
+
+  window.PetitFM = Object.assign({
+    aba(a) { aba = a; if (a === 'lista') { F = null; } desenhar(); },
+    nova() { F = novoF(); F.itens = [linha({})]; aba = 'editor'; desenhar(); },
+    campo(c, v) { F[c] = v; if (c === 'sku' && v && !F.nome) { const p = D.produtos.find(x => x.sku === v); if (p) F.nome = p.nome; } desenhar(); },
+    set(j, c, v) { const l = F.itens[j]; l[c] = v; if (c === 'nome' && !l.mp_id) l.mp_id = acharMp(v); if (c === 'mp_id' && v) { const m = mpDe(v); if (m) { l.un = m.unidade_base; l.nome = m.nome; } } desenhar(); },
+    add() { F.itens.push(linha({})); desenhar(); },
+    rem(j) { F.itens.splice(j, 1); desenhar(); },
+    editar(id) { const f = D.formulas.find(x => x.id === id); F = novoF(); F.id = id; F.sku = f.sku || ''; F.nome = f.nome; F.unidades = String(Number(f.unidades_por_receita)); F.peso = f.peso_total_g == null ? '' : String(Number(f.peso_total_g)); F.obs = f.observacao || ''; F.origem = f.origem;
+      F.itens = D.itens.filter(i => i.formula_id === id).map(i => { const m = mpDe(i.materia_prima_id); return { nome: m ? m.nome : '', mp_id: i.materia_prima_id, tipo: '', qtd: String(Number(i.quantidade)), un: i.unidade, grupo: i.grupo || '', custo: '', obs: '' }; }); aba = 'editor'; desenhar(); },
+    versoes(k) { verSku = verSku === k ? null : k; desenhar(); },
+    async salvar() {
+      const un = numero(F.unidades); if (!F.nome.trim()) return aviso('Informe o nome da fórmula.', false); if (!(un > 0)) return aviso('Informe quantas unidades saem da receita.', false);
+      F.itens.forEach(l => { if (!l.mp_id && nz(l.nome) === 'essencia') l.nome = 'Essência ' + F.nome.trim(); });   // cada fragrância é uma matéria-prima diferente
+      const itens = F.itens.filter(l => l.nome.trim() || l.mp_id); if (!itens.length) return aviso('Adicione pelo menos um ingrediente.', false);
+      for (const l of itens) { if (!(numero(l.qtd) > 0)) return aviso('Ingrediente "' + l.nome + '": informe a quantidade.', false); }
+      const p = { sku: F.sku || null, nome: F.nome, unidades_por_receita: un, peso_total_g: numero(F.peso), origem: F.origem, observacao: F.obs,
+        itens: itens.map(l => ({ materia_prima_id: l.mp_id || null, nome: l.nome, tipo: l.tipo, quantidade: numero(l.qtd), unidade: l.un, grupo: l.grupo, custo: numero(l.custo) })) };
+      try { const r = await rpc('gestao_salvar_formula', { p }); await carregar(); F = null; aba = 'lista';
+        aviso('Fórmula salva (versão ' + r.versao + ').' + (r.materias_primas_criadas.length ? ' Matérias-primas novas: ' + r.materias_primas_criadas.length + ' (cadastro incompleto).' : ''), true); desenhar(); } catch (e) { aviso(e.message, false); }
+    },
+    async ativar(id) { try { await rpc('gestao_ativar_formula', { p_id: id }); await carregar(); aviso('Versão reativada.', true); desenhar(); } catch (e) { aviso(e.message, false); } },
+    async excluir(id) { if (!confirm('Excluir esta versão da fórmula?')) return; try { await rpc('gestao_excluir_formula', { p_id: id }); await carregar(); aviso('Versão excluída.', true); desenhar(); } catch (e) { aviso(e.message, false); } }
+  }, { pdf: A.pdf, texto: A.texto, xlsx: A.xlsx, abaPlanilha: A.aba });
+
+  function desenhar() {
+    const raiz = $('fm-conteudo'); if (!raiz) return;
+    document.querySelectorAll('#fm-abas button').forEach(b => { b.className = 'btn btn-sm ' + (b.dataset.a === (aba === 'editor' ? 'importar' : aba) ? 'btn-primary' : 'btn-outline'); });
+    raiz.innerHTML = aba === 'lista' ? lista() : aba === 'importar' ? importar() : editor();
+  }
+  function montar() {
+    if ($('sec-formulas')) return;
+    const ref = $('nav-notas'); if (!ref) return;
+    const item = document.createElement('div'); item.className = 'nav-item'; item.id = 'nav-formulas'; item.innerHTML = '<span class="ico">🧴</span> Fórmulas'; item.onclick = () => goTo('formulas');
+    ref.parentNode.insertBefore(item, ref.nextSibling);
+    const s = document.createElement('div'); s.id = 'sec-formulas'; s.className = 'section';
+    s.innerHTML = `<div class="page-header"><div><div class="page-title">🧴 Fórmulas</div><div class="page-sub">Receita de cada produto, com versões e custo pela matéria-prima</div></div></div>
+      <div class="page-content"><div id="fm-abas" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px"><button data-a="lista" onclick="PetitFM.aba('lista')">📚 Fórmulas</button><button data-a="importar" onclick="PetitFM.aba('importar')">➕ Importar / nova fórmula</button></div><div id="fm-conteudo"></div></div>`;
+    $('main').appendChild(s);
+    const g0 = window.goTo;
+    window.goTo = function (sec) { g0(sec); if (sec === 'formulas') { $('nav-formulas').classList.add('active'); carregar().then(desenhar).catch(e => { $('fm-conteudo').innerHTML = '<div class="alert">Não foi possível carregar: ' + esc(e.message) + '<br>Se for a primeira vez, o SQL da Fase 7 precisa ter sido rodado no Supabase.</div>'; }); } };
   }
   montar();
 })();

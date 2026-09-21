@@ -58,7 +58,27 @@
   }
 
   // ---------- editor de um item ----------
-  function editor(sc, i, j, row, custo, qtd) {
+  const low = x => String(x == null ? '' : x).trim().toLowerCase(), d10 = x => String(x || '').slice(0, 10);
+  // Procura cadastro existente (mesmo critério do banco: nome + fornecedor) e compara tamanho e data com a compra que definiu o custo atual.
+  function existente(c, nota) {
+    let reg = null, itens = [];
+    if (c.destino === 'materia_prima') { reg = c.mp_id ? D.mps.find(m => m.id === c.mp_id) : D.mps.find(m => low(m.nome) === low(c.nome) && (m.fornecedor_cnpj || '') === (nota.cnpj || '')); if (reg) itens = D.itens.filter(i => i.materia_prima_id === reg.id); }
+    else if (c.destino === 'embalagem_envio') { reg = D.embs.find(m => low(m.nome) === low(c.nome)); if (reg) itens = D.itens.filter(i => i.embalagem_envio_id === reg.id); }
+    if (!reg) return null;
+    const ult = d10(reg.data_ultima_compra), ref = itens.map(i => ({ i, n: D.notas.find(x => x.id === i.nota_fiscal_id) })).filter(x => x.n)
+      .sort((a, b) => ((d10(b.n.data_emissao) === ult) - (d10(a.n.data_emissao) === ult)) || d10(b.n.data_emissao).localeCompare(d10(a.n.data_emissao)))[0];
+    return { reg, ref, ult };
+  }
+  function avisoAtualizar(sc, i, j, c, nota, cb) {
+    if (c.destino !== 'materia_prima' && c.destino !== 'embalagem_envio') return '';
+    const ex = existente(c, nota); if (!ex) return '<div class="td-muted">🆕 novo cadastro</div>';
+    const r = ex.reg, un = r.unidade_base, k = `'${sc}',${i},${j}`, base = '<div class="td-muted">Já cadastrado: <b>' + un4(r.custo_unitario_atual) + '/' + un + '</b>' + (ex.ult ? ' em ' + dataBR(ex.ult) : '') + '. Esta nota: <b>' + un4(cb) + '/' + c.base + '</b> em ' + dataBR(nota.data) + '.</div>';
+    if (ex.ref && Number(ex.ref.i.conteudo_por_unidade) !== Number(c.cont)) return base + '<div style="color:#B26A00;font-size:11px">⚠ Tamanho diferente (antes ' + Number(ex.ref.i.conteudo_por_unidade) + ' ' + esc(ex.ref.i.unidade_base || un) + ', agora ' + (Number(c.cont) || '?') + ' ' + c.base + '): o custo NÃO será atualizado. Para cadastrar separado, mude o nome.</div>';
+    if (c.destino === 'embalagem_envio' && ex.ref && (ex.ref.n.fornecedor_cnpj || '') !== (nota.cnpj || '')) return base + '<div style="color:#B26A00;font-size:11px">⚠ Fornecedor diferente do da última compra: o custo NÃO será atualizado.</div>';
+    if (ex.ult && d10(nota.data) < ex.ult) return base + '<div class="td-muted">Nota mais antiga que a última compra: o custo não muda.</div>';
+    return base + '<label style="font-size:12px"><input type="checkbox" style="width:auto" ' + (c.atualizar !== false ? 'checked' : '') + ' onchange="PetitNF.set(' + k + ',&quot;atualizar&quot;,this.checked)"> Atualizar custo e data da última compra</label>';
+  }
+  function editor(sc, i, j, row, custo, qtd, nota) {
     const c = row.cls, k = `'${sc}',${i},${j}`, pendente = c.destino === 'pendente';
     const opt = (o, v) => Object.entries(o).map(([a, b]) => `<option value="${a}"${a === v ? ' selected' : ''}>${b}</option>`).join('');
     let cat = '';
@@ -75,12 +95,12 @@
       <td><b>${esc(row.item.descricao)}</b><div class="td-muted">cód. ${esc(row.item.codigo || row.item.codigo_fornecedor)} · ${qtd} ${esc(row.item.unidade || row.item.unidade_compra || '')}${c.origem === 'memoria' ? ' · 🧠 lembrado' : c.origem === 'sem_regra' ? ' · ❓ sem regra' : ''}</div></td>
       <td>${brl(custo)}</td>
       <td><select onchange="PetitNF.set(${k},'destino',this.value)">${opt(DEST, c.destino)}</select>${cat}</td>
-      <td>${nomeCampo}</td>
+      <td>${nomeCampo}${avisoAtualizar(sc, i, j, c, nota || {}, cb)}</td>
       <td>${usaConteudo ? `<div style="display:flex;gap:4px"><input type="number" step="any" min="0" value="${c.cont}" style="width:80px" onchange="PetitNF.set(${k},'cont',this.value)"><select style="width:64px" onchange="PetitNF.set(${k},'base',this.value)">${['g', 'ml', 'un'].map(u => `<option${u === c.base ? ' selected' : ''}>${u}</option>`).join('')}</select></div><div class="td-muted">por unidade comprada → ${un4(cb)}/${c.base}</div>` : '<span class="td-muted">—</span>'}</td>
     </tr>`;
   }
   const payloadItem = (c) => ({ destino: c.destino, conteudo_por_unidade: Number(c.cont) || 1, unidade_base: c.base,
-    materia_prima: { nome: c.nome, categoria: c.categoria || 'ingrediente', tipo: c.tipo, id: c.mp_id || null }, embalagem: { nome: c.nome },
+    materia_prima: { nome: c.nome, categoria: c.categoria || 'ingrediente', tipo: c.tipo, id: c.mp_id || null, atualizar_custo: c.atualizar !== false }, embalagem: { nome: c.nome, atualizar_custo: c.atualizar !== false },
     despesa: { descricao: c.nome, categoria: c.categoria || 'outro', recorrente: !!c.recorrente } });
   function valida(c) {
     if (c.destino === 'pendente') return '';
@@ -122,6 +142,47 @@
       if (r.cls.destino === 'pendente') return aviso('Escolha um destino para o item.', false);
       try { await rpc('gestao_classificar_item', { p: Object.assign({ item_id: r.id }, payloadItem(r.cls)) }); await carregar(); aviso('Item classificado.', true); desenhar(); } catch (er) { aviso(er.message, false); }
     },
+    async excluirMp(id) {
+      const m = D.mps.find(x => x.id === id), n = D.itens.filter(i => i.materia_prima_id === id).length;
+      const dois = '\n\n';
+      if (!confirm('Excluir a matéria-prima "' + (m ? m.nome : '') + '"?' + (n ? dois + n + ' item(ns) de nota fiscal ligado(s) a ela voltam para a lista de Pendentes (a nota e o custo dela não mudam).' : ''))) return;
+      const fim = r => { aviso('Matéria-prima excluída.' + (r.itens_voltaram_para_pendente ? ' ' + r.itens_voltaram_para_pendente + ' item(ns) de nota voltaram para Pendentes.' : '') + (r.formulas_afetadas ? ' Removida de ' + r.formulas_afetadas + ' fórmula(s): ' + r.formulas + '.' : ''), true); return carregar().then(desenhar); };
+      try { await fim(await rpc('gestao_excluir_materia_prima', { p_id: id })); } catch (er) {
+        if (!/usada nas f/.test(er.message)) return aviso(er.message, false);
+        if (!confirm(er.message.replace(/ Confirme para removê-la.*$/, '') + dois + 'Excluir mesmo assim? Ela será tirada dessas fórmulas (o custo delas deixa de incluí-la).')) return;
+        try { await fim(await rpc('gestao_excluir_materia_prima', { p_id: id, p_forcar: true })); } catch (e2) { aviso(e2.message, false); }
+      }
+    },
+    async ignorar(id, sim) {
+      if (sim && !confirm('Tirar este item da lista de Pendentes? Ele continua na nota fiscal (o custo da nota não muda), mas não vira matéria-prima, embalagem nem despesa. Dá para desfazer.')) return;
+      try { await rpc('gestao_ignorar_item', { p_id: id, p_ignorar: !!sim }); await carregar(); aviso(sim ? 'Item ignorado.' : 'Item voltou para Pendentes.', true); desenhar(); } catch (er) { aviso(er.message, false); }
+    },
+    editarEmb(id) { window.__embEdit = id ? Object.assign({}, D.embs.find(m => m.id === id)) : { unidade_base: 'un', ativo: true }; desenhar(); },
+    async salvarEmb() {
+      const g = k => $('em-' + k), p = { id: window.__embEdit.id || null, nome: g('nome').value, unidade_base: g('base').value, custo_unitario_atual: g('custo').value.replace(',', '.'),
+        data_ultima_compra: g('data').value, observacao: g('obs').value, ativo: g('ativo').checked };
+      try { await rpc('gestao_salvar_embalagem_envio', { p }); window.__embEdit = null; await carregar(); aviso('Embalagem salva.', true); desenhar(); } catch (er) { aviso(er.message, false); }
+    },
+    async paraProduto(id) {
+      const m = D.embs.find(x => x.id === id);
+      if (!confirm('Mudar "' + (m ? m.nome : '') + '" para EMBALAGEM DE PRODUTO?' + String.fromCharCode(10, 10) + 'Ela passa a entrar no custo do produto e na precificação (e deixa de contar como custo fixo de envio). O custo, a data e os itens das notas são mantidos.')) return;
+      try { const r = await rpc('gestao_converter_embalagem_para_produto', { p_id: id }); await carregar(); aviso('"' + r.nome + '" agora é embalagem de produto (' + r.itens_atualizados + ' item(ns) de nota atualizados).' + (r.uniu_com_existente ? ' Foi unida a um cadastro que já existia.' : '') + ' Complete o cadastro em Matérias-primas, se precisar.', true); desenhar(); } catch (er) { aviso(er.message, false); }
+    },
+    async paraEnvio(id) {
+      const m = D.mps.find(x => x.id === id);
+      if (!confirm('Mudar "' + (m ? m.nome : '') + '" para EMBALAGEM DE ENVIO?' + String.fromCharCode(10, 10) + 'Ela sai do custo do produto e da precificação e passa a contar como custo fixo de envio. Se estiver em alguma fórmula, o sistema avisa e não muda.')) return;
+      try { const r = await rpc('gestao_converter_produto_para_embalagem_envio', { p_id: id }); await carregar(); aviso('"' + r.nome + '" agora é embalagem de envio (' + r.itens_atualizados + ' item(ns) de nota atualizados).' + (r.uniu_com_existente ? ' Foi unida a um cadastro que já existia.' : ''), true); desenhar(); } catch (er) { aviso(er.message, false); }
+    },
+    async paraDespesa(origem) {
+      const pref = origem === 'materia_prima' ? 'mp' : 'em', reg = origem === 'materia_prima' ? window.__mpEdit : window.__embEdit, cat = $(pref + '-dcat').value, rec = $(pref + '-drec').checked;
+      if (!confirm('Mudar "' + reg.nome + '" para DESPESA (' + CAT_DESP[cat] + (rec ? ', contínua' : ', pontual') + ')?' + String.fromCharCode(10, 10) + 'Os itens de nota ligados viram despesas e este cadastro é removido.')) return;
+      try { const r = await rpc('gestao_converter_para_despesa', { p: { origem, id: reg.id, categoria: cat, recorrente: rec } }); window.__mpEdit = null; window.__embEdit = null; await carregar(); aviso('"' + r.nome + '" virou despesa (' + r.despesas_criadas + ' lançamento(s)).', true); desenhar(); } catch (er) { aviso(er.message, false); }
+    },
+    async excluirEmb(id) {
+      const m = D.embs.find(x => x.id === id);
+      if (!confirm('Excluir a embalagem "' + (m ? m.nome : '') + '"? Itens de nota ligados a ela voltam para Pendentes.')) return;
+      try { const r = await rpc('gestao_excluir_embalagem_envio', { p_id: id }); await carregar(); aviso('Embalagem excluída.' + (r.itens_voltaram_para_pendente ? ' ' + r.itens_voltaram_para_pendente + ' item(ns) voltaram para Pendentes.' : ''), true); desenhar(); } catch (er) { aviso(er.message, false); }
+    },
     async excluirNota(id) {
       const n = D.notas.find(x => x.id === id);
       if (!confirm('Excluir a nota ' + (n ? n.numero : '') + ' e as despesas criadas por ela? O custo atual das matérias-primas não volta atrás.')) return;
@@ -130,7 +191,14 @@
     editarMp(id) { window.__mpEdit = id ? Object.assign({}, D.mps.find(m => m.id === id)) : { categoria: 'ingrediente', unidade_base: 'g', cadastro_completo: true, ativo: true }; desenhar(); },
     async salvarMp() {
       const g = k => $('mp-' + k), p = { id: window.__mpEdit.id || null, nome: g('nome').value, tipo: g('tipo').value, categoria: g('categoria').value, unidade_base: g('base').value,
-        custo_unitario_atual: g('custo').value.replace(',', '.'), fornecedor_nome: g('forn').value, cadastro_completo: g('ok').checked, observacao: g('obs').value, ativo: g('ativo').checked };
+        custo_unitario_atual: g('custo').value.replace(',', '.'), fornecedor_nome: g('forn').value, cadastro_completo: g('ok').checked, observacao: g('obs').value, ativo: g('ativo').checked, data_ultima_compra: g('data').value };
+      if (!p.id) {   // cadastro novo com o mesmo nome e fornecedor de um que já existe: pergunta se quer atualizar o valor e a data
+        const ex = D.mps.find(m => low(m.nome) === low(p.nome) && low(m.fornecedor_nome) === low(p.fornecedor_nome));
+        if (ex) {
+          if (!confirm('Já existe "' + ex.nome + '"' + (ex.fornecedor_nome ? ' (' + ex.fornecedor_nome + ')' : '') + ' com custo ' + un4(ex.custo_unitario_atual) + '/' + ex.unidade_base + (ex.data_ultima_compra ? ' em ' + dataBR(ex.data_ultima_compra) : '') + '.' + String.fromCharCode(10, 10) + 'Atualizar o cadastro existente com o novo valor' + (p.data_ultima_compra ? ' e a data ' + dataBR(p.data_ultima_compra) : '') + '? (Cancelar = não salvar)')) return;
+          p.id = ex.id;
+        }
+      }
       try { await rpc('gestao_salvar_materia_prima', { p }); window.__mpEdit = null; await carregar(); aviso('Matéria-prima salva.', true); desenhar(); } catch (er) { aviso(er.message, false); }
     },
     async salvarDespesa() {
@@ -155,7 +223,7 @@
         ${n.difal ? `<label class="toggle-label"><input type="checkbox" ${e.ratear ? 'checked' : ''} onchange="PetitNF.ratear(${i},this.checked)"> somar o DIFAL (${brl(n.difal)}) ao custo</label>` : ''}</div>
         ${e.ja ? `<div class="alert" style="margin:10px 16px">Esta nota já foi importada em ${dataBR(e.ja.criado_em)}. Não é possível importar de novo.</div>` : ''}
         <table><thead><tr><th>Item da nota</th><th>Custo</th><th>Destino</th><th>Cadastro</th><th>Conteúdo</th></tr></thead><tbody>
-        ${e.linhas.map((r, j) => editor('l', i, j, r, custos[j], r.item.quantidade)).join('')}</tbody></table>
+        ${e.linhas.map((r, j) => editor('l', i, j, r, custos[j], r.item.quantidade, { cnpj: n.fornecedor.cnpj, data: n.data_emissao })).join('')}</tbody></table>
         <div style="padding:12px 16px;display:flex;gap:8px"><button class="btn btn-primary" ${e.ja ? 'disabled' : ''} onclick="PetitNF.importar(${i})">Confirmar e importar</button><button class="btn btn-outline" onclick="PetitNF.descartar(${i})">Descartar</button></div></div>`;
     });
     return h;
@@ -168,12 +236,14 @@
         <td>${its.length}${p ? ' · <span class="badge badge-pink">' + p + ' pendente(s)</span>' : ''}</td><td><button class="btn-icon" title="Excluir nota" onclick="PetitNF.excluirNota('${n.id}')">🗑</button></td></tr>`; }).join('')}</tbody></table></div>`;
   }
   function tabPendentes() {
-    if (!pend.length) return '<div class="empty-state">Nenhum item pendente. 🎉</div>';
+    const ign = D.itens.filter(i => i.destino === 'ignorado');
+    const blocoIgn = ign.length ? `<details style="margin-top:16px"><summary class="td-muted">Itens ignorados (${ign.length}) — continuam na nota, mas não viram matéria-prima nem despesa</summary><div class="table-card" style="margin-top:8px"><table><tbody>${ign.map(i => { const nt = D.notas.find(n => n.id === i.nota_fiscal_id) || {}; return `<tr><td>${esc(i.descricao)}<div class="td-muted">NF ${esc(nt.numero || '')} · ${esc(nt.fornecedor_fantasia || nt.fornecedor_nome || '')}</div></td><td>${brl(i.custo_total)}</td><td><button class="btn btn-outline btn-sm" onclick="PetitNF.ignorar('${i.id}', false)">Desfazer</button></td></tr>`; }).join('')}</tbody></table></div></details>` : '';
+    if (!pend.length) return '<div class="empty-state">Nenhum item pendente. 🎉</div>' + blocoIgn;
     return `<p class="td-muted">Estes itens não foram reconhecidos. Escolha o destino e confirme — a escolha fica lembrada para as próximas notas do mesmo fornecedor.</p>
       <div class="table-card"><table><thead><tr><th>Item da nota</th><th>Custo</th><th>Destino</th><th>Cadastro</th><th>Conteúdo</th><th></th></tr></thead><tbody>${pend.map((r, j) => {
       const nota = D.notas.find(n => n.id === r.item.nota_fiscal_id) || {};
-      return editor('p', 0, j, Object.assign({}, r, { item: Object.assign({}, r.item, { descricao: r.item.descricao + ' (NF ' + (nota.numero || '') + ' · ' + (nota.fornecedor_fantasia || nota.fornecedor_nome || '') + ')' }) }), Number(r.item.custo_total), Number(r.item.quantidade_comprada))
-        .replace(/<\/tr>$/, `<td><button class="btn btn-primary btn-sm" onclick="PetitNF.confirmarPendente(${j})">Confirmar</button></td></tr>`); }).join('')}</tbody></table></div>`;
+      return editor('p', 0, j, Object.assign({}, r, { item: Object.assign({}, r.item, { descricao: r.item.descricao + ' (NF ' + (nota.numero || '') + ' · ' + (nota.fornecedor_fantasia || nota.fornecedor_nome || '') + ')' }) }), Number(r.item.custo_total), Number(r.item.quantidade_comprada), { cnpj: nota.fornecedor_cnpj, data: nota.data_emissao })
+        .replace(/<\/tr>$/, `<td style="white-space:nowrap"><button class="btn btn-primary btn-sm" onclick="PetitNF.confirmarPendente(${j})">Confirmar</button> <button class="btn btn-outline btn-sm" title="Tira da lista de pendentes; o item continua na nota" onclick="PetitNF.ignorar('${r.id}', true)">Ignorar</button></td></tr>`); }).join('')}</tbody></table></div>` + blocoIgn;
   }
   function tabMp() {
     const f = ($('nf-filtro') || {}).value || '', t = f.toLowerCase();
@@ -186,14 +256,25 @@
       <div class="field"><label>Categoria</label><select id="mp-categoria"><option value="ingrediente"${e.categoria === 'ingrediente' ? ' selected' : ''}>Ingrediente</option><option value="embalagem_produto"${e.categoria === 'embalagem_produto' ? ' selected' : ''}>Embalagem do produto</option></select></div>
       <div class="field"><label>Unidade base</label><select id="mp-base">${['g', 'ml', 'un'].map(u => `<option${u === e.unidade_base ? ' selected' : ''}>${u}</option>`).join('')}</select></div>
       <div class="field"><label>Custo atual por unidade base (R$)</label><input id="mp-custo" value="${e.custo_unitario_atual == null ? '' : e.custo_unitario_atual}"></div>
+      <div class="field"><label>Data da compra (opcional)</label><input type="date" id="mp-data" value="${esc(d10(e.data_ultima_compra))}"></div>
       <div class="field"><label>Observação</label><input id="mp-obs" value="${esc(e.observacao)}"></div></div>
       <label class="toggle-label"><input type="checkbox" id="mp-ok" ${e.cadastro_completo ? 'checked' : ''}> cadastro completo</label> <label class="toggle-label"><input type="checkbox" id="mp-ativo" ${e.ativo !== false ? 'checked' : ''}> ativa</label>
-      <div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" onclick="PetitNF.salvarMp()">Salvar</button><button class="btn btn-outline btn-sm" onclick="window.__mpEdit=null;PetitNF.aba('mp')">Cancelar</button></div></div>`;
+      ${e.id ? `<div style="margin-top:14px;padding:10px 12px;border:1px dashed var(--border2);border-radius:8px"><b>Mudar para despesa</b><div class="td-muted">Os itens de nota ligados a este cadastro viram despesas (data e valor de cada nota) e este cadastro deixa de existir. Use para coisas como material de escritório, curso, equipamento.</div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px"><select id="mp-dcat" style="width:auto">${Object.entries(CAT_DESP).map(([a, b]) => `<option value="${a}"${a === 'material_escritorio' ? ' selected' : ''}>${b}</option>`).join('')}</select><label class="toggle-label"><input type="checkbox" id="mp-drec" checked> despesa contínua (recorrente: entra no custo fixo mensal)</label><button class="btn btn-outline btn-sm" onclick="PetitNF.paraDespesa('materia_prima')">Converter em despesa</button></div></div>` : ''}<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" onclick="PetitNF.salvarMp()">Salvar</button><button class="btn btn-outline btn-sm" onclick="window.__mpEdit=null;PetitNF.aba('mp')">Cancelar</button></div></div>`;
     h += lista.length ? `<div class="table-card"><table><thead><tr><th>Matéria-prima</th><th>Tipo</th><th>Fornecedor</th><th>Custo atual</th><th>Última compra</th><th></th></tr></thead><tbody>${lista.map(m => `<tr${m.ativo === false ? ' style="opacity:.5"' : ''}>
       <td class="td-name">${esc(m.nome)}<div class="td-muted">${m.categoria === 'embalagem_produto' ? 'embalagem do produto' : 'ingrediente'}${m.cadastro_completo ? '' : ' · <span class="badge badge-pink">cadastro incompleto</span>'}</div></td>
       <td>${esc(m.tipo || '—')}</td><td>${esc(m.fornecedor_nome || '—')}</td><td>${un4(m.custo_unitario_atual)}/${m.unidade_base}</td><td>${dataBR(m.data_ultima_compra)}</td>
-      <td><button class="btn-icon" onclick="PetitNF.editarMp('${m.id}')">✏️</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty-state">Nenhuma matéria-prima.</div>';
-    if (D.embs.length) h += `<h3 style="margin:18px 0 8px">Embalagens de envio</h3><div class="table-card"><table><thead><tr><th>Item</th><th>Custo atual</th><th>Última compra</th></tr></thead><tbody>${D.embs.map(m => `<tr><td>${esc(m.nome)}</td><td>${un4(m.custo_unitario_atual)}/${m.unidade_base}</td><td>${dataBR(m.data_ultima_compra)}</td></tr>`).join('')}</tbody></table></div>`;
+      <td style="white-space:nowrap"><button class="btn-icon" title="Editar" onclick="PetitNF.editarMp('${m.id}')">✏️</button> ${m.categoria === 'embalagem_produto' ? `<button class="btn btn-outline btn-sm" title="Passa para embalagem de ENVIO: entra no custo fixo (sai do custo do produto)" onclick="PetitNF.paraEnvio('${m.id}')">→ Embalagem de envio</button> ` : ''}<button class="btn-icon" title="Excluir" onclick="PetitNF.excluirMp('${m.id}')">🗑</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty-state">Nenhuma matéria-prima.</div>';
+    const ee = window.__embEdit;
+    h += `<div class="table-toolbar" style="margin-top:22px"><h3 style="margin:0">Embalagens de envio</h3><button class="btn btn-primary btn-sm" onclick="PetitNF.editarEmb()">+ Nova embalagem</button></div>`;
+    if (ee) h += `<div class="table-card" style="padding:16px;margin-bottom:12px"><b>${ee.id ? 'Editar' : 'Nova'} embalagem de envio</b><div class="grid2f" style="margin-top:8px">
+      <div class="field"><label>Nome</label><input id="em-nome" value="${esc(ee.nome)}"></div>
+      <div class="field"><label>Unidade base</label><select id="em-base">${['un', 'g', 'ml'].map(u => `<option${u === (ee.unidade_base || 'un') ? ' selected' : ''}>${u}</option>`).join('')}</select></div>
+      <div class="field"><label>Custo atual por unidade base (R$)</label><input id="em-custo" value="${ee.custo_unitario_atual == null ? '' : ee.custo_unitario_atual}"></div>
+      <div class="field"><label>Data da compra (opcional)</label><input type="date" id="em-data" value="${esc(d10(ee.data_ultima_compra))}"></div>
+      <div class="field" style="grid-column:1/-1"><label>Observação</label><input id="em-obs" value="${esc(ee.observacao)}"></div></div>
+      <label class="toggle-label"><input type="checkbox" id="em-ativo" ${ee.ativo !== false ? 'checked' : ''}> ativa</label>
+      ${ee.id ? `<div style="margin-top:14px;padding:10px 12px;border:1px dashed var(--border2);border-radius:8px"><b>Mudar para despesa</b><div class="td-muted">Os itens de nota ligados a este cadastro viram despesas (data e valor de cada nota) e este cadastro deixa de existir. Use para coisas como material de escritório, curso, equipamento.</div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px"><select id="em-dcat" style="width:auto">${Object.entries(CAT_DESP).map(([a, b]) => `<option value="${a}"${a === 'material_escritorio' ? ' selected' : ''}>${b}</option>`).join('')}</select><label class="toggle-label"><input type="checkbox" id="em-drec" checked> despesa contínua (recorrente: entra no custo fixo mensal)</label><button class="btn btn-outline btn-sm" onclick="PetitNF.paraDespesa('embalagem_envio')">Converter em despesa</button></div></div>` : ''}<div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-primary btn-sm" onclick="PetitNF.salvarEmb()">Salvar</button><button class="btn btn-outline btn-sm" onclick="window.__embEdit=null;PetitNF.aba('mp')">Cancelar</button></div></div>`;
+    h += D.embs.length ? `<div class="table-card"><table><thead><tr><th>Item</th><th>Custo atual</th><th>Última compra</th><th></th></tr></thead><tbody>${D.embs.map(m => `<tr${m.ativo === false ? ' style="opacity:.5"' : ''}><td>${esc(m.nome)}${m.observacao ? '<div class="td-muted">' + esc(m.observacao) + '</div>' : ''}</td><td>${un4(m.custo_unitario_atual)}/${m.unidade_base}</td><td>${dataBR(m.data_ultima_compra)}</td><td style="white-space:nowrap"><button class="btn-icon" title="Editar" onclick="PetitNF.editarEmb('${m.id}')">✏️</button> <button class="btn btn-outline btn-sm" title="Passa para embalagem de PRODUTO: entra no custo do produto e na precificação (em vez do custo fixo)" onclick="PetitNF.paraProduto('${m.id}')">→ Embalagem de produto</button> <button class="btn-icon" title="Excluir" onclick="PetitNF.excluirEmb('${m.id}')">🗑</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty-state">Nenhuma embalagem de envio.</div>';
     return h;
   }
   function tabDesp() {
