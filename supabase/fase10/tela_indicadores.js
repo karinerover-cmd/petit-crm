@@ -25,7 +25,8 @@
       ler('feiras_realizadas', 'data_evento', false), ler('custos_fixos', 'vigente_desde', false), ler('config_indicadores'), ler('despesas_operacionais', 'data', false)]);
     let metas = [], temMetas = true;
     try { metas = await ler('metas_faturamento', 'mes'); } catch (e) { temMetas = false; }   // complemento de metas ainda não rodado: a tela funciona sem ele
-    D = { ind, feiraMedia, feiras, custos, cfg: cfg[0] || {}, despRec: desp.filter(x => x.recorrente), metas, temMetas };
+    let temNiveis = false; try { await ler('progresso_mensal'); temNiveis = true; } catch (e) { }   // Fase 14 (mínima/desafio) ainda não rodada
+    D = { ind, feiraMedia, feiras, custos, cfg: cfg[0] || {}, despRec: desp.filter(x => x.recorrente), metas, temMetas, temNiveis };
     if (!mesSel || !D.ind.some(i => i.mes === mesSel)) mesSel = D.ind.length ? D.ind[0].mes : '';
   }
   async function rpc(nome, args) { const { data, error } = await sb().rpc(nome, args); if (error) throw new Error(error.message); return data; }
@@ -49,6 +50,7 @@
     let h = `<div class="table-toolbar"><select onchange="PetitIN.mes(this.value)">${D.ind.map(x => `<option value="${x.mes}"${x.mes === i.mes ? ' selected' : ''}>${mesTxt(x.mes)}</option>`).join('')}</select>
       ${D.temMetas ? badgeReal(i.status_meta_realista) : ''}
       ${ativo ? badge(i.status) : '<span class="td-muted">Equilíbrio e meta saudável só a partir de ' + mesTxt(D.cfg.indicadores_inicio || '2026-09-01') + '.</span>'}</div>`;
+    if (D.temNiveis) h += '<div id="in-progresso"></div>';   // barra de progresso da Fase 14 (preenchida depois de desenhar)
     const hj = new Date(), anoHj = hj.getFullYear();
     if (D.temMetas && !D.metas.some(x => d10(x.mes).startsWith(anoHj + '-')) && hj.getMonth() <= 1)   // janeiro e fevereiro: lembrete para traçar o ano
       h += `<div class="alert" style="margin-bottom:12px">📅 Ainda não há metas para ${anoHj}. <button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="PetitIN.anoMetas(${anoHj})">Traçar as metas de ${anoHj}</button></div>`;
@@ -132,6 +134,8 @@
     if (!D.temMetas) return '<div class="alert">As metas realistas precisam do SQL "20260923110000_fase10_metas_realistas.sql" rodado no Supabase.</div>';
     const fatMes = m => { const x = D.ind.find(r => d10(r.mes) === m); return x ? Number(x.faturamento_total) : null; };
     const metaMes = m => { const x = D.metas.find(r => d10(r.mes) === m); return x ? String(Number(x.valor)).replace('.', ',') : ''; };
+    const nivelMes = (m, col) => { const x = D.metas.find(r => d10(r.mes) === m); return x && x[col] != null ? String(Number(x[col])).replace('.', ',') : ''; };
+    const N = D.temNiveis;                                  // Fase 14: meta mínima e desafio ao lado da realista
     const mesDe = (ano, k) => ano + '-' + String(k + 1).padStart(2, '0') + '-01', anoAnt = anoMetas - 1;
     const anosComMeta = [...new Set(D.metas.map(x => Number(d10(x.mes).slice(0, 4))))];
     const anoAtual = new Date().getFullYear(), anos = [...new Set(anosComMeta.concat([anoAtual, anoAtual + 1, anoMetas]))].sort();
@@ -140,7 +144,9 @@
       const m = mesDe(anoMetas, k), f = fatMes(m), ant = fatMes(mesDe(anoAnt, k)), mt = numero(metaMes(m));
       if (ant != null) { totAnt += ant; temAnt = true; } if (mt) totMeta += mt; if (f != null) totReal += f;
       return `<tr><td>${nome}/${anoMetas}</td><td class="td-muted">${ant == null ? '—' : brl(ant)}</td>
+        ${N ? `<td><input id="mt-min-${k + 1}" value="${nivelMes(m, 'meta_minima')}" style="width:100px" placeholder="—"></td>` : ''}
         <td><input id="mt-${k + 1}" value="${metaMes(m)}" style="width:120px" placeholder="—" oninput="PetitIN.totalMetas()"></td>
+        ${N ? `<td><input id="mt-des-${k + 1}" value="${nivelMes(m, 'meta_desafio')}" style="width:100px" placeholder="—"></td>` : ''}
         <td class="td-muted" id="mt-var-${k + 1}">${ant && mt ? (mt >= ant ? '+' : '') + pct(mt / ant - 1) : '—'}</td>
         <td>${f == null ? '—' : brl(f)}</td><td>${f != null && mt ? `${badgeReal(f >= mt ? 'atingida' : 'abaixo')} ${pct(f / mt)}` : '—'}</td></tr>`;
     }).join('');
@@ -152,8 +158,8 @@
         ${temAnt ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px"><span>Mesmo mês de ${anoAnt}</span><input id="mt-cresc" value="10" style="width:70px"><span>% de crescimento</span>
           <button class="btn btn-outline btn-sm" onclick="PetitIN.projetar()">Preencher as metas</button><span class="td-muted">preenche só os meses que têm faturamento em ${anoAnt}; confira e ajuste antes de salvar</span></div>`
           : `<div class="td-muted" style="margin-top:6px">Não há faturamento de ${anoAnt} no sistema para projetar (o histórico começa em nov/2025). Digite as metas direto na tabela.</div>`}</div>
-      <div class="table-card"><table><thead><tr><th>Mês</th><th>Faturamento ${anoAnt}</th><th>Meta ${anoMetas} (R$)</th><th>vs ${anoAnt}</th><th>Faturamento ${anoMetas}</th><th>% da meta</th></tr></thead><tbody>${linhas}
-        <tr style="font-weight:600"><td>Total</td><td>${temAnt ? brl(totAnt) : '—'}</td><td id="mt-total">${brl(totMeta)}</td><td class="td-muted">${temAnt && totMeta ? (totMeta >= totAnt ? '+' : '') + pct(totMeta / totAnt - 1) : '—'}</td><td>${brl(totReal)}</td><td>${totMeta ? pct(totReal / totMeta) : '—'}</td></tr></tbody></table>
+      <div class="table-card"><table><thead><tr><th>Mês</th><th>Faturamento ${anoAnt}</th>${N ? '<th>Mínima (R$)</th>' : ''}<th>${N ? 'Realista' : 'Meta'} ${anoMetas} (R$)</th>${N ? '<th>Desafio (R$)</th>' : ''}<th>vs ${anoAnt}</th><th>Faturamento ${anoMetas}</th><th>% da meta</th></tr></thead><tbody>${linhas}
+        <tr style="font-weight:600"><td>Total</td><td>${temAnt ? brl(totAnt) : '—'}</td>${N ? '<td></td>' : ''}<td id="mt-total">${brl(totMeta)}</td>${N ? '<td></td>' : ''}<td class="td-muted">${temAnt && totMeta ? (totMeta >= totAnt ? '+' : '') + pct(totMeta / totAnt - 1) : '—'}</td><td>${brl(totReal)}</td><td>${totMeta ? pct(totReal / totMeta) : '—'}</td></tr></tbody></table>
       <div style="padding:12px 16px"><button class="btn btn-primary btn-sm" onclick="PetitIN.salvarMetas()">Salvar metas de ${anoMetas}</button></div></div>`;
   }
 
@@ -227,7 +233,14 @@
     },
     async salvarMetas() {
       const metas = []; for (let k = 1; k <= 12; k++) { const raw = ($('mt-' + k).value || '').trim(), v = raw === '' ? '' : numero(raw);
-        if (raw !== '' && (v == null || v < 0)) return aviso('Meta inválida em ' + MESES[k - 1] + '.', false); metas.push({ mes: k, valor: v === '' ? '' : String(v) }); }
+        if (raw !== '' && (v == null || v < 0)) return aviso('Meta inválida em ' + MESES[k - 1] + '.', false);
+        const item = { mes: k, valor: v === '' ? '' : String(v) };
+        if (D.temNiveis) for (const [campo, id] of [['minima', 'mt-min-'], ['desafio', 'mt-des-']]) {   // Fase 14
+          const r = ($(id + k).value || '').trim(), n = r === '' ? '' : numero(r);
+          if (r !== '' && (n == null || n < 0)) return aviso('Meta ' + (campo === 'minima' ? 'mínima' : 'desafio') + ' inválida em ' + MESES[k - 1] + '.', false);
+          item[campo] = n === '' ? '' : String(n);
+        }
+        metas.push(item); }
       try { const n = await rpc('gestao_salvar_metas', { p: { ano: anoMetas, metas } }); await recarregar(n + ' meta(s) de ' + anoMetas + ' salva(s).'); } catch (e) { aviso(e.message, false); }
     },
     async salvarConfig() {
@@ -241,6 +254,7 @@
     const raiz = $('in-conteudo'); if (!raiz) return;
     document.querySelectorAll('#in-abas button').forEach(b => { b.className = 'btn btn-sm ' + (b.dataset.a === aba ? 'btn-primary' : 'btn-outline'); });
     raiz.innerHTML = aba === 'painel' ? tabPainel() : aba === 'feiras' ? tabFeiras() : aba === 'custos' ? tabCustos() : aba === 'metas' ? tabMetas() : tabConfig();
+    if (aba === 'painel' && window.PetitProgresso) window.PetitProgresso.mes('in-progresso', mesSel);
   }
   function montar() {
     if ($('sec-indicadores')) return;

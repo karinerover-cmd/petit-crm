@@ -3680,7 +3680,8 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
       ler('feiras_realizadas', 'data_evento', false), ler('custos_fixos', 'vigente_desde', false), ler('config_indicadores'), ler('despesas_operacionais', 'data', false)]);
     let metas = [], temMetas = true;
     try { metas = await ler('metas_faturamento', 'mes'); } catch (e) { temMetas = false; }   // complemento de metas ainda não rodado: a tela funciona sem ele
-    D = { ind, feiraMedia, feiras, custos, cfg: cfg[0] || {}, despRec: desp.filter(x => x.recorrente), metas, temMetas };
+    let temNiveis = false; try { await ler('progresso_mensal'); temNiveis = true; } catch (e) { }   // Fase 14 (mínima/desafio) ainda não rodada
+    D = { ind, feiraMedia, feiras, custos, cfg: cfg[0] || {}, despRec: desp.filter(x => x.recorrente), metas, temMetas, temNiveis };
     if (!mesSel || !D.ind.some(i => i.mes === mesSel)) mesSel = D.ind.length ? D.ind[0].mes : '';
   }
   async function rpc(nome, args) { const { data, error } = await sb().rpc(nome, args); if (error) throw new Error(error.message); return data; }
@@ -3704,6 +3705,7 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
     let h = `<div class="table-toolbar"><select onchange="PetitIN.mes(this.value)">${D.ind.map(x => `<option value="${x.mes}"${x.mes === i.mes ? ' selected' : ''}>${mesTxt(x.mes)}</option>`).join('')}</select>
       ${D.temMetas ? badgeReal(i.status_meta_realista) : ''}
       ${ativo ? badge(i.status) : '<span class="td-muted">Equilíbrio e meta saudável só a partir de ' + mesTxt(D.cfg.indicadores_inicio || '2026-09-01') + '.</span>'}</div>`;
+    if (D.temNiveis) h += '<div id="in-progresso"></div>';   // barra de progresso da Fase 14 (preenchida depois de desenhar)
     const hj = new Date(), anoHj = hj.getFullYear();
     if (D.temMetas && !D.metas.some(x => d10(x.mes).startsWith(anoHj + '-')) && hj.getMonth() <= 1)   // janeiro e fevereiro: lembrete para traçar o ano
       h += `<div class="alert" style="margin-bottom:12px">📅 Ainda não há metas para ${anoHj}. <button class="btn btn-primary btn-sm" style="margin-left:8px" onclick="PetitIN.anoMetas(${anoHj})">Traçar as metas de ${anoHj}</button></div>`;
@@ -3787,6 +3789,8 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
     if (!D.temMetas) return '<div class="alert">As metas realistas precisam do SQL "20260923110000_fase10_metas_realistas.sql" rodado no Supabase.</div>';
     const fatMes = m => { const x = D.ind.find(r => d10(r.mes) === m); return x ? Number(x.faturamento_total) : null; };
     const metaMes = m => { const x = D.metas.find(r => d10(r.mes) === m); return x ? String(Number(x.valor)).replace('.', ',') : ''; };
+    const nivelMes = (m, col) => { const x = D.metas.find(r => d10(r.mes) === m); return x && x[col] != null ? String(Number(x[col])).replace('.', ',') : ''; };
+    const N = D.temNiveis;                                  // Fase 14: meta mínima e desafio ao lado da realista
     const mesDe = (ano, k) => ano + '-' + String(k + 1).padStart(2, '0') + '-01', anoAnt = anoMetas - 1;
     const anosComMeta = [...new Set(D.metas.map(x => Number(d10(x.mes).slice(0, 4))))];
     const anoAtual = new Date().getFullYear(), anos = [...new Set(anosComMeta.concat([anoAtual, anoAtual + 1, anoMetas]))].sort();
@@ -3795,7 +3799,9 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
       const m = mesDe(anoMetas, k), f = fatMes(m), ant = fatMes(mesDe(anoAnt, k)), mt = numero(metaMes(m));
       if (ant != null) { totAnt += ant; temAnt = true; } if (mt) totMeta += mt; if (f != null) totReal += f;
       return `<tr><td>${nome}/${anoMetas}</td><td class="td-muted">${ant == null ? '—' : brl(ant)}</td>
+        ${N ? `<td><input id="mt-min-${k + 1}" value="${nivelMes(m, 'meta_minima')}" style="width:100px" placeholder="—"></td>` : ''}
         <td><input id="mt-${k + 1}" value="${metaMes(m)}" style="width:120px" placeholder="—" oninput="PetitIN.totalMetas()"></td>
+        ${N ? `<td><input id="mt-des-${k + 1}" value="${nivelMes(m, 'meta_desafio')}" style="width:100px" placeholder="—"></td>` : ''}
         <td class="td-muted" id="mt-var-${k + 1}">${ant && mt ? (mt >= ant ? '+' : '') + pct(mt / ant - 1) : '—'}</td>
         <td>${f == null ? '—' : brl(f)}</td><td>${f != null && mt ? `${badgeReal(f >= mt ? 'atingida' : 'abaixo')} ${pct(f / mt)}` : '—'}</td></tr>`;
     }).join('');
@@ -3807,8 +3813,8 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
         ${temAnt ? `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px"><span>Mesmo mês de ${anoAnt}</span><input id="mt-cresc" value="10" style="width:70px"><span>% de crescimento</span>
           <button class="btn btn-outline btn-sm" onclick="PetitIN.projetar()">Preencher as metas</button><span class="td-muted">preenche só os meses que têm faturamento em ${anoAnt}; confira e ajuste antes de salvar</span></div>`
           : `<div class="td-muted" style="margin-top:6px">Não há faturamento de ${anoAnt} no sistema para projetar (o histórico começa em nov/2025). Digite as metas direto na tabela.</div>`}</div>
-      <div class="table-card"><table><thead><tr><th>Mês</th><th>Faturamento ${anoAnt}</th><th>Meta ${anoMetas} (R$)</th><th>vs ${anoAnt}</th><th>Faturamento ${anoMetas}</th><th>% da meta</th></tr></thead><tbody>${linhas}
-        <tr style="font-weight:600"><td>Total</td><td>${temAnt ? brl(totAnt) : '—'}</td><td id="mt-total">${brl(totMeta)}</td><td class="td-muted">${temAnt && totMeta ? (totMeta >= totAnt ? '+' : '') + pct(totMeta / totAnt - 1) : '—'}</td><td>${brl(totReal)}</td><td>${totMeta ? pct(totReal / totMeta) : '—'}</td></tr></tbody></table>
+      <div class="table-card"><table><thead><tr><th>Mês</th><th>Faturamento ${anoAnt}</th>${N ? '<th>Mínima (R$)</th>' : ''}<th>${N ? 'Realista' : 'Meta'} ${anoMetas} (R$)</th>${N ? '<th>Desafio (R$)</th>' : ''}<th>vs ${anoAnt}</th><th>Faturamento ${anoMetas}</th><th>% da meta</th></tr></thead><tbody>${linhas}
+        <tr style="font-weight:600"><td>Total</td><td>${temAnt ? brl(totAnt) : '—'}</td>${N ? '<td></td>' : ''}<td id="mt-total">${brl(totMeta)}</td>${N ? '<td></td>' : ''}<td class="td-muted">${temAnt && totMeta ? (totMeta >= totAnt ? '+' : '') + pct(totMeta / totAnt - 1) : '—'}</td><td>${brl(totReal)}</td><td>${totMeta ? pct(totReal / totMeta) : '—'}</td></tr></tbody></table>
       <div style="padding:12px 16px"><button class="btn btn-primary btn-sm" onclick="PetitIN.salvarMetas()">Salvar metas de ${anoMetas}</button></div></div>`;
   }
 
@@ -3882,7 +3888,14 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
     },
     async salvarMetas() {
       const metas = []; for (let k = 1; k <= 12; k++) { const raw = ($('mt-' + k).value || '').trim(), v = raw === '' ? '' : numero(raw);
-        if (raw !== '' && (v == null || v < 0)) return aviso('Meta inválida em ' + MESES[k - 1] + '.', false); metas.push({ mes: k, valor: v === '' ? '' : String(v) }); }
+        if (raw !== '' && (v == null || v < 0)) return aviso('Meta inválida em ' + MESES[k - 1] + '.', false);
+        const item = { mes: k, valor: v === '' ? '' : String(v) };
+        if (D.temNiveis) for (const [campo, id] of [['minima', 'mt-min-'], ['desafio', 'mt-des-']]) {   // Fase 14
+          const r = ($(id + k).value || '').trim(), n = r === '' ? '' : numero(r);
+          if (r !== '' && (n == null || n < 0)) return aviso('Meta ' + (campo === 'minima' ? 'mínima' : 'desafio') + ' inválida em ' + MESES[k - 1] + '.', false);
+          item[campo] = n === '' ? '' : String(n);
+        }
+        metas.push(item); }
       try { const n = await rpc('gestao_salvar_metas', { p: { ano: anoMetas, metas } }); await recarregar(n + ' meta(s) de ' + anoMetas + ' salva(s).'); } catch (e) { aviso(e.message, false); }
     },
     async salvarConfig() {
@@ -3896,6 +3909,7 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
     const raiz = $('in-conteudo'); if (!raiz) return;
     document.querySelectorAll('#in-abas button').forEach(b => { b.className = 'btn btn-sm ' + (b.dataset.a === aba ? 'btn-primary' : 'btn-outline'); });
     raiz.innerHTML = aba === 'painel' ? tabPainel() : aba === 'feiras' ? tabFeiras() : aba === 'custos' ? tabCustos() : aba === 'metas' ? tabMetas() : tabConfig();
+    if (aba === 'painel' && window.PetitProgresso) window.PetitProgresso.mes('in-progresso', mesSel);
   }
   function montar() {
     if ($('sec-indicadores')) return;
@@ -4529,6 +4543,96 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
     window.goTo = function (sec) { g0(sec); if (sec === 'caixa') { $('nav-caixa').classList.add('active'); carregar().then(desenhar).catch(e => { $('fc-conteudo').innerHTML = quebraAviso + 'Não foi possível carregar: ' + esc(e.message) + '<br>Se for a primeira vez, o SQL da Fase 12 precisa ter sido rodado no Supabase.</div>'; }); } };
   }
   montar();
+})();
+
+</script>
+<script>
+// ═══════════ PROGRESSO DAS METAS (Fase 14) ═══════════
+// Barra de progresso guiada pela meta Realista, com a Mínima e a Desafio como marcos na mesma barra, e o
+// progresso da semana. Todos os números vêm prontos das views progresso_mensal e progresso_semanal — aqui só se desenha.
+// Aparece num card no topo do Dashboard (mês e semana corrente) e no painel de Indicadores (mês escolhido).
+// Depende de window.__gestao.sb() (camada_supabase.js).
+(function () {
+  const $ = id => document.getElementById(id);
+  const sb = () => window.__gestao && window.__gestao.sb();
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const brl = n => (n == null || n === '' || isNaN(n)) ? '—' : Number(n).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const pct = n => (n == null || isNaN(n)) ? '—' : (Number(n) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + '%';
+  const d10 = s => String(s || '').slice(0, 10);
+  const dataBR = d => d10(d).split('-').reverse().slice(0, 2).join('/');
+  const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  const mesTxt = m => { const [y, mm] = d10(m).split('-'); return MESES[Number(mm) - 1] + '/' + y; };
+
+  async function ler(view, filtro) {
+    const cli = sb(); if (!cli) return null;
+    const { data, error } = await cli.from(view).select('*').range(0, 999);
+    if (error) return null;                               // Fase 14 ainda não rodada: o card simplesmente não aparece
+    return (data || []).filter(filtro);
+  }
+
+  // posição (0–100%) de um valor na barra: a barra vai de 0 até "escala_barra" vezes a Realista
+  const pos = (r, escala) => Math.max(0, Math.min(100, Number(r) / Number(escala) * 100)).toFixed(1) + '%';
+
+  function barraMes(pm) {
+    if (!pm) return '';
+    const e = pm.escala_barra || 1, cor = pm.atingiu_realista ? '#2e7d32' : 'var(--pink)';
+    // Realista embaixo da barra; Mínima e Desafio em cima (assim não se sobrepõem nem em tela de celular).
+    // Rótulo perto de uma ponta da barra se alinha para dentro, em vez de centralizar e vazar para fora.
+    const marco = (r, rotulo, valor, feito, emCima) => {
+      if (r == null) return '';
+      const p = Number(r) / Number(e), alinha = p > 0.85 ? 'translateX(-100%)' : p < 0.15 ? 'none' : 'translateX(-50%)';
+      return `<div title="${rotulo}: ${brl(valor)}" style="position:absolute;left:${pos(r, e)};top:-4px;bottom:-4px;width:2px;background:#555"></div>
+      <div style="position:absolute;left:${pos(r, e)};${emCima ? 'bottom:20px' : 'top:20px'};transform:${alinha};font-size:11px;line-height:1.25;white-space:nowrap;color:${feito ? '#2e7d32' : '#555'}">${rotulo}${feito ? ' ✓' : ''}<br><b>${brl(valor)}</b></div>`;
+    };
+    const temCima = pm.marco_minima != null || pm.marco_desafio != null;
+    const niveis = [pm.meta_minima != null ? `Mínima ${pct(pm.pct_minima)}` : '', `Realista ${pct(pm.pct_realista)}`, pm.meta_desafio != null ? `Desafio ${pct(pm.pct_desafio)}` : ''].filter(Boolean).join(' · ');
+    return `<div style="position:relative;height:14px;border-radius:7px;background:#EFE7E2;margin:${temCima ? 40 : 10}px 0 44px">
+        <div style="height:100%;border-radius:7px;background:${cor};width:${pos(pm.pct_realista, e)}"></div>
+        ${marco(pm.marco_minima, 'Mínima', pm.meta_minima, pm.atingiu_minima, true)}
+        ${marco(1, 'Realista', pm.meta_realista, pm.atingiu_realista, false)}
+        ${marco(pm.marco_desafio, 'Desafio', pm.meta_desafio, pm.atingiu_desafio, true)}
+      </div>
+      <div style="font-size:13px"><b>${brl(pm.faturamento)}</b> de ${brl(pm.meta_realista)} (${pct(pm.pct_realista)} da realista) <span class="td-muted">· ${niveis}</span></div>
+      <div class="td-muted" style="font-size:12px;margin-top:4px">${pm.atingiu_realista ? 'Meta realista batida! 🎉'
+        : pm.dias_restantes > 0 ? `Faltam ${brl(pm.falta_realista)} em ${pm.dias_restantes} dia(s) — <b>${brl(pm.ritmo_diario_realista)}/dia</b> para bater a realista.`
+        : `O mês fechou ${brl(pm.falta_realista)} abaixo da realista.`}</div>`;
+  }
+
+  function barraSemana(ps) {
+    if (!ps || ps.meta_semanal == null) return '';
+    const cheio = Number(ps.pct_semana) >= 1;
+    return `<div style="margin-top:14px;font-size:13px"><b>Semana ${dataBR(ps.semana_inicio)} a ${dataBR(ps.semana_fim)}</b></div>
+      <div style="height:10px;border-radius:5px;background:#EFE7E2;margin:6px 0"><div style="height:100%;border-radius:5px;background:${cheio ? '#2e7d32' : '#993556'};width:${pos(ps.pct_semana, 1)}"></div></div>
+      <div style="font-size:13px">${brl(ps.faturamento)} de ${brl(ps.meta_semanal)} (${pct(ps.pct_semana)})${cheio ? ' — meta da semana batida ✓' : ` <span class="td-muted">· faltam ${brl(ps.falta_semana)}</span>`}
+      ${ps.meta_completa ? '' : '<span class="td-muted"> · parte da semana cai num mês sem meta</span>'}</div>`;
+  }
+
+  async function cardDashboard() {
+    const alvo = $('sec-dashboard'); if (!alvo || !sb()) return;
+    const [mes, sem] = await Promise.all([ler('progresso_mensal', r => r.mes_corrente), ler('progresso_semanal', r => r.semana_corrente)]);
+    let card = $('dash-progresso');
+    if (mes === null) { if (card) card.remove(); return; }
+    if (!card) {
+      card = document.createElement('div'); card.id = 'dash-progresso'; card.className = 'card';
+      card.style.cssText = 'margin-bottom:18px;padding:16px 18px';
+      const ref = $('conf-supabase') || $('dash-stats'); ref.parentNode.insertBefore(card, ref);
+    }
+    const pm = mes[0];
+    card.innerHTML = `<div style="font-weight:600">🎯 Meta de ${mesTxt(pm ? pm.mes : new Date().toISOString())}</div>`
+      + (pm ? barraMes(pm) + barraSemana(sem && sem[0]) : '<div class="td-muted" style="margin-top:6px">Sem meta para este mês — cadastre em Indicadores → 🎯 Metas.</div>');
+  }
+
+  // painel de Indicadores: barra do mês escolhido
+  async function noElemento(id, mes) {
+    const el = $(id); if (!el) return;
+    const r = await ler('progresso_mensal', x => d10(x.mes) === d10(mes));
+    if (!r || !r.length) { el.innerHTML = ''; return; }
+    el.innerHTML = `<div class="table-card" style="padding:16px;margin-bottom:12px"><b>Progresso da meta — ${mesTxt(mes)}</b>${barraMes(r[0])}</div>`;
+  }
+
+  window.PetitProgresso = { dashboard: cardDashboard, mes: noElemento };
+  const g0 = window.goTo;
+  window.goTo = function (sec) { g0(sec); if (sec === 'dashboard') cardDashboard().catch(() => {}); };
 })();
 
 </script>

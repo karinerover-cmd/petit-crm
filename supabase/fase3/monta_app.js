@@ -11,6 +11,7 @@ const telaIndicadores = fs.readFileSync(__dirname + '/../fase10/tela_indicadores
 const telaMateriaPrimaRotina = fs.readFileSync(__dirname + '/../fase11/tela_materia_prima_rotina.js', 'utf8');   // Fase 11
 const telaDividas = fs.readFileSync(__dirname + '/../fase13/tela_dividas.js', 'utf8');   // Fase 13
 const telaFluxoCaixa = fs.readFileSync(__dirname + '/../fase12/tela_fluxo_caixa.js', 'utf8');   // Fase 12
+const progressoMetas = fs.readFileSync(__dirname + '/../fase14/progresso_metas.js', 'utf8');   // Fase 14
 const numeros = fs.readFileSync(__dirname + '/numeros.js', 'utf8');   // leitor único de números (formato brasileiro), usado pelas telas 6–10
 
 function troca(de, para, rotulo) {
@@ -129,7 +130,7 @@ const overlay = `
 troca('<body>', '<body>' + overlay, 'body');
 
 // 4) camada Supabase depois do script principal
-troca('</script>\n</body>', '</script>\n<script>\n' + camada + '\n</script>\n<script>\n' + numeros + '\n</script>\n<script>\n' + nfe + '\n</script>\n<script>\n' + telaNotas + '\n</script>\n<script>\n' + soapcalc + '\n' + precificacao + '\n</script>\n<script>\n' + telaFormulas + '\n</script>\n<script>\n' + telaLotes + '\n</script>\n<script>\n' + telaMargem + '\n</script>\n<script>\n' + telaIndicadores + '\n</script>\n<script>\n' + telaMateriaPrimaRotina + '\n</script>\n<script>\n' + telaDividas + '\n</script>\n<script>\n' + telaFluxoCaixa + '\n</script>\n</body>', 'fim');
+troca('</script>\n</body>', '</script>\n<script>\n' + camada + '\n</script>\n<script>\n' + numeros + '\n</script>\n<script>\n' + nfe + '\n</script>\n<script>\n' + telaNotas + '\n</script>\n<script>\n' + soapcalc + '\n' + precificacao + '\n</script>\n<script>\n' + telaFormulas + '\n</script>\n<script>\n' + telaLotes + '\n</script>\n<script>\n' + telaMargem + '\n</script>\n<script>\n' + telaIndicadores + '\n</script>\n<script>\n' + telaMateriaPrimaRotina + '\n</script>\n<script>\n' + telaDividas + '\n</script>\n<script>\n' + telaFluxoCaixa + '\n</script>\n<script>\n' + progressoMetas + '\n</script>\n</body>', 'fim');
 
 fs.writeFileSync(dir + 'petit_sabo_gestao_supabase.html', h);
 console.log('gerado:', (h.length / 1024).toFixed(1) + ' KB');
