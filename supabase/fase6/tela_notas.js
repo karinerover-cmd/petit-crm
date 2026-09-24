@@ -112,7 +112,7 @@
   window.PetitNF = {
     set(sc, i, j, campo, v) {
       const row = sc === 'l' ? lote[i].linhas[j] : pend[j];
-      if (campo === 'cont') v = String(v).replace(',', '.');
+      if (campo === 'cont') v = String(window.petitNumero(v) ?? '');
       row.cls[campo] = v;
       if (campo === 'destino') { row.cls.categoria = ''; row.cls.mp_id = ''; if (v === 'materia_prima' && !row.cls.nome) row.cls.nome = NFe.limparNome(row.item.descricao); if ((v === 'embalagem_envio' || v === 'despesa_operacional') && !row.cls.nome) row.cls.nome = NFe.limparNome(row.item.descricao); }
       if (campo === 'mp_id' && v) { const m = D.mps.find(x => x.id === v); if (m) { row.cls.base = m.unidade_base; row.cls.categoria = m.categoria; } }
@@ -159,7 +159,7 @@
     },
     editarEmb(id) { window.__embEdit = id ? Object.assign({}, D.embs.find(m => m.id === id)) : { unidade_base: 'un', ativo: true }; desenhar(); },
     async salvarEmb() {
-      const g = k => $('em-' + k), p = { id: window.__embEdit.id || null, nome: g('nome').value, unidade_base: g('base').value, custo_unitario_atual: g('custo').value.replace(',', '.'),
+      const g = k => $('em-' + k), p = { id: window.__embEdit.id || null, nome: g('nome').value, unidade_base: g('base').value, custo_unitario_atual: String(window.petitNumero(g('custo').value) ?? ''),
         data_ultima_compra: g('data').value, observacao: g('obs').value, ativo: g('ativo').checked };
       try { await rpc('gestao_salvar_embalagem_envio', { p }); window.__embEdit = null; await carregar(); aviso('Embalagem salva.', true); desenhar(); } catch (er) { aviso(er.message, false); }
     },
@@ -191,7 +191,7 @@
     editarMp(id) { window.__mpEdit = id ? Object.assign({}, D.mps.find(m => m.id === id)) : { categoria: 'ingrediente', unidade_base: 'g', cadastro_completo: true, ativo: true }; desenhar(); },
     async salvarMp() {
       const g = k => $('mp-' + k), p = { id: window.__mpEdit.id || null, nome: g('nome').value, tipo: g('tipo').value, categoria: g('categoria').value, unidade_base: g('base').value,
-        custo_unitario_atual: g('custo').value.replace(',', '.'), fornecedor_nome: g('forn').value, cadastro_completo: g('ok').checked, observacao: g('obs').value, ativo: g('ativo').checked, data_ultima_compra: g('data').value };
+        custo_unitario_atual: String(window.petitNumero(g('custo').value) ?? ''), fornecedor_nome: g('forn').value, cadastro_completo: g('ok').checked, observacao: g('obs').value, ativo: g('ativo').checked, data_ultima_compra: g('data').value };
       if (!p.id) {   // cadastro novo com o mesmo nome e fornecedor de um que já existe: pergunta se quer atualizar o valor e a data
         const ex = D.mps.find(m => low(m.nome) === low(p.nome) && low(m.fornecedor_nome) === low(p.fornecedor_nome));
         if (ex) {
@@ -202,7 +202,7 @@
       try { await rpc('gestao_salvar_materia_prima', { p }); window.__mpEdit = null; await carregar(); aviso('Matéria-prima salva.', true); desenhar(); } catch (er) { aviso(er.message, false); }
     },
     async salvarDespesa() {
-      const g = k => $('ds-' + k), p = { data: g('data').value, descricao: g('desc').value, categoria: g('cat').value, valor: g('valor').value.replace(',', '.'), recorrente: g('rec').checked };
+      const g = k => $('ds-' + k), p = { data: g('data').value, descricao: g('desc').value, categoria: g('cat').value, valor: String(window.petitNumero(g('valor').value) ?? ''), recorrente: g('rec').checked };
       if (!p.descricao.trim() || !(Number(p.valor) >= 0) || p.valor === '') return aviso('Informe descrição e valor.', false);
       try { await rpc('gestao_salvar_despesa', { p }); await carregar(); aviso('Despesa lançada.', true); desenhar(); } catch (er) { aviso(er.message, false); }
     },
@@ -255,7 +255,7 @@
       <div class="field"><label>Fornecedor</label><input id="mp-forn" value="${esc(e.fornecedor_nome)}"></div>
       <div class="field"><label>Categoria</label><select id="mp-categoria"><option value="ingrediente"${e.categoria === 'ingrediente' ? ' selected' : ''}>Ingrediente</option><option value="embalagem_produto"${e.categoria === 'embalagem_produto' ? ' selected' : ''}>Embalagem do produto</option></select></div>
       <div class="field"><label>Unidade base</label><select id="mp-base">${['g', 'ml', 'un'].map(u => `<option${u === e.unidade_base ? ' selected' : ''}>${u}</option>`).join('')}</select></div>
-      <div class="field"><label>Custo atual por unidade base (R$)</label><input id="mp-custo" value="${e.custo_unitario_atual == null ? '' : e.custo_unitario_atual}"></div>
+      <div class="field"><label>Custo atual por unidade base (R$)</label><input id="mp-custo" value="${e.custo_unitario_atual == null ? '' : window.petitFmt(Number(e.custo_unitario_atual))}"></div>
       <div class="field"><label>Data da compra (opcional)</label><input type="date" id="mp-data" value="${esc(d10(e.data_ultima_compra))}"></div>
       <div class="field"><label>Observação</label><input id="mp-obs" value="${esc(e.observacao)}"></div></div>
       <label class="toggle-label"><input type="checkbox" id="mp-ok" ${e.cadastro_completo ? 'checked' : ''}> cadastro completo</label> <label class="toggle-label"><input type="checkbox" id="mp-ativo" ${e.ativo !== false ? 'checked' : ''}> ativa</label>
@@ -269,7 +269,7 @@
     if (ee) h += `<div class="table-card" style="padding:16px;margin-bottom:12px"><b>${ee.id ? 'Editar' : 'Nova'} embalagem de envio</b><div class="grid2f" style="margin-top:8px">
       <div class="field"><label>Nome</label><input id="em-nome" value="${esc(ee.nome)}"></div>
       <div class="field"><label>Unidade base</label><select id="em-base">${['un', 'g', 'ml'].map(u => `<option${u === (ee.unidade_base || 'un') ? ' selected' : ''}>${u}</option>`).join('')}</select></div>
-      <div class="field"><label>Custo atual por unidade base (R$)</label><input id="em-custo" value="${ee.custo_unitario_atual == null ? '' : ee.custo_unitario_atual}"></div>
+      <div class="field"><label>Custo atual por unidade base (R$)</label><input id="em-custo" value="${ee.custo_unitario_atual == null ? '' : window.petitFmt(Number(ee.custo_unitario_atual))}"></div>
       <div class="field"><label>Data da compra (opcional)</label><input type="date" id="em-data" value="${esc(d10(ee.data_ultima_compra))}"></div>
       <div class="field" style="grid-column:1/-1"><label>Observação</label><input id="em-obs" value="${esc(ee.observacao)}"></div></div>
       <label class="toggle-label"><input type="checkbox" id="em-ativo" ${ee.ativo !== false ? 'checked' : ''}> ativa</label>

@@ -8,7 +8,7 @@
   const brl = n => (n == null || n === '' || isNaN(n)) ? '—' : Number(n).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const num4 = n => (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
   const dataBR = d => d ? String(d).slice(0, 10).split('-').reverse().join('/') : '';
-  const numero = v => { const n = parseFloat(String(v == null ? '' : v).replace(',', '.')); return isNaN(n) ? null : n; };
+  const numero = v => window.petitNumero(v);   // formato brasileiro: 1.234,56 · 7.200 · 0,035 (leitor único do app)
   const arred90 = p => Math.ceil(Number(p) + 0.10) - 0.10;            // preços terminados em ,90 (ex.: 36,42 → 36,90)
   const STATUS = { pendente: ['aguardando aprovação', 'badge-pink'], aprovado: ['aprovado', 'badge-blue'], ajustado: ['ajustado', 'badge-blue'], descartado: ['descartado', ''] };
   let D = { produtos: [], formulas: [], mps: [], emb: [], lotes: [], cfg: { valor_hora_mao_de_obra: 14.03, markup_varejo: 3 } }, aba = 'novo', soPendentes = true, calc = null, embSku = '', embLinhas = [], aberto = null, NP = null, npCalc = null, npSeq = 0;
@@ -207,7 +207,7 @@
       if (!confirm('Excluir este lote? O preço que já foi aplicado ao produto não volta atrás.')) return;
       try { await rpc('gestao_excluir_lote', { p_id: id }); await carregar(); aviso('Lote excluído.', true); desenhar(); } catch (e) { aviso(e.message, false); }
     },
-    embSku(s) { embSku = s; embLinhas = D.emb.filter(x => x.sku === s).map(x => ({ mp: x.materia_prima_id, qtd: String(Number(x.quantidade)) })); desenhar(); },
+    embSku(s) { embSku = s; embLinhas = D.emb.filter(x => x.sku === s).map(x => ({ mp: x.materia_prima_id, qtd: window.petitFmt(Number(x.quantidade)) })); desenhar(); },
     embSet(j, c, v) { embLinhas[j][c] = v; desenhar(); }, embAdd() { embLinhas.push({ mp: '', qtd: '1' }); desenhar(); }, embRem(j) { embLinhas.splice(j, 1); desenhar(); },
     async embSalvar() {
       const itens = embLinhas.filter(l => l.mp).map(l => ({ materia_prima_id: l.mp, quantidade: numero(l.qtd) }));
@@ -221,7 +221,7 @@
       if (campo === 'fonte' && v) {   // copiando de outro produto: aproveita categoria, validade e embalagem, se ainda estiverem vazias
         const p = produto(v);
         if (p) { if (!NP.categoria && p.categoria) NP.categoria = p.categoria; if (!NP.validade && p.validade_meses) NP.validade = String(p.validade_meses); }
-        if (!NP.emb.length) NP.emb = D.emb.filter(x => x.sku === v).map(x => ({ mp: x.materia_prima_id, qtd: String(Number(x.quantidade)) }));
+        if (!NP.emb.length) NP.emb = D.emb.filter(x => x.sku === v).map(x => ({ mp: x.materia_prima_id, qtd: window.petitFmt(Number(x.quantidade)) }));
       }
       desenhar();
     },

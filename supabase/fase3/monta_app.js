@@ -7,6 +7,8 @@ const nfe = fs.readFileSync(__dirname + '/../fase6/nfe.js', 'utf8'), telaNotas =
 const soapcalc = fs.readFileSync(__dirname + '/../fase7/soapcalc.js', 'utf8'), precificacao = fs.readFileSync(__dirname + '/../fase7/precificacao.js', 'utf8'), telaFormulas = fs.readFileSync(__dirname + '/../fase7/tela_formulas.js', 'utf8');   // Fase 7
 const telaLotes = fs.readFileSync(__dirname + '/../fase8/tela_lotes.js', 'utf8');   // Fase 8
 const telaMargem = fs.readFileSync(__dirname + '/../fase9/tela_margem.js', 'utf8');   // Fase 9
+const telaIndicadores = fs.readFileSync(__dirname + '/../fase10/tela_indicadores.js', 'utf8');   // Fase 10
+const numeros = fs.readFileSync(__dirname + '/numeros.js', 'utf8');   // leitor único de números (formato brasileiro), usado pelas telas 6–10
 
 function troca(de, para, rotulo) {
   const n = h.split(de).length - 1;
@@ -28,6 +30,9 @@ const css = `<style>
 /* Fase 6+: o menu ganhou várias seções novas (Notas fiscais, Fórmulas, Lotes e preços, Margem de vendas) e passou a não caber
    na altura da tela; o menu original não tinha rolagem própria (só ele, o conteúdo da página rola normalmente). */
 .sb-nav{overflow-y:auto;min-height:0}
+/* No app original, .alert nasce escondida (display:none) e o próprio app a mostra por código. Nas telas das Fases 6–10
+   os avisos são sempre para aparecer — sem isto, eles ficavam invisíveis (ex.: "nota já importada", "custo incompleto"). */
+#sec-notas .alert,#sec-formulas .alert,#sec-lotes .alert,#sec-margem .alert,#sec-indicadores .alert{display:block;background:#FFF4DC;color:#8A5A00;border:1px solid #F0D9A8}
 #gs-login{position:fixed;inset:0;z-index:99999;background:#fdf8f6;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif}
 #gs-login form{background:#fff;border:1px solid #eadfd9;border-radius:14px;padding:28px;width:min(360px,92vw);box-shadow:0 8px 30px rgba(0,0,0,.08)}
 #gs-login h1{font-size:20px;margin:0 0 4px;color:#a63d63}#gs-login p{margin:0 0 16px;color:#777;font-size:13px}
@@ -50,7 +55,7 @@ const overlay = `
 troca('<body>', '<body>' + overlay, 'body');
 
 // 4) camada Supabase depois do script principal
-troca('</script>\n</body>', '</script>\n<script>\n' + camada + '\n</script>\n<script>\n' + nfe + '\n</script>\n<script>\n' + telaNotas + '\n</script>\n<script>\n' + soapcalc + '\n' + precificacao + '\n</script>\n<script>\n' + telaFormulas + '\n</script>\n<script>\n' + telaLotes + '\n</script>\n<script>\n' + telaMargem + '\n</script>\n</body>', 'fim');
+troca('</script>\n</body>', '</script>\n<script>\n' + camada + '\n</script>\n<script>\n' + numeros + '\n</script>\n<script>\n' + nfe + '\n</script>\n<script>\n' + telaNotas + '\n</script>\n<script>\n' + soapcalc + '\n' + precificacao + '\n</script>\n<script>\n' + telaFormulas + '\n</script>\n<script>\n' + telaLotes + '\n</script>\n<script>\n' + telaMargem + '\n</script>\n<script>\n' + telaIndicadores + '\n</script>\n</body>', 'fim');
 
 fs.writeFileSync(dir + 'petit_sabo_gestao_supabase.html', h);
 console.log('gerado:', (h.length / 1024).toFixed(1) + ' KB');

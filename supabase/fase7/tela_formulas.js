@@ -9,7 +9,7 @@
   const un4 = n => (n == null || isNaN(n)) ? '—' : 'R$ ' + Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
   const dataBR = d => d ? String(d).slice(0, 10).split('-').reverse().join('/') : '';
   const nz = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-  const numero = v => { const n = parseFloat(String(v == null ? '' : v).replace(',', '.')); return isNaN(n) ? null : n; };
+  const numero = v => window.petitNumero(v);   // formato brasileiro: 1.234,56 · 7.200 · 0,035 (leitor único do app)
   const PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js', PDFJS_WORKER = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
   const XLSXJS = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
   let D = { formulas: [], itens: [], mps: [], custos: [], produtos: [] }, aba = 'lista', F = null, verSku = null, planilha = null;
@@ -36,7 +36,7 @@
   }
   const mpDe = id => D.mps.find(m => m.id === id);
   const novoF = () => ({ id: null, sku: '', nome: '', unidades: '', peso: '', obs: '', origem: 'manual', itens: [] });
-  function linha(i) { const mp = i.materia_prima_id || i.mp_id || acharMp(i.nome); return { nome: i.nome || '', mp_id: mp, tipo: i.tipo || '', qtd: i.quantidade == null ? '' : String(i.quantidade), un: i.unidade || 'g', grupo: i.grupo || '', custo: i.custo == null ? '' : String(+Number(i.custo).toFixed(6)), obs: i.obs || '' }; }
+  function linha(i) { const mp = i.materia_prima_id || i.mp_id || acharMp(i.nome); return { nome: i.nome || '', mp_id: mp, tipo: i.tipo || '', qtd: i.quantidade == null ? '' : window.petitFmt(i.quantidade), un: i.unidade || 'g', grupo: i.grupo || '', custo: i.custo == null ? '' : window.petitFmt(+Number(i.custo).toFixed(6)), obs: i.obs || '' }; }
   function custoLinha(l) { const mp = l.mp_id ? mpDe(l.mp_id) : null; if (mp && mp.custo_unitario_atual != null) return Number(mp.custo_unitario_atual); return numero(l.custo); }
   function totais() {
     let tot = 0, sem = 0; F.itens.forEach(l => { const c = custoLinha(l), q = numero(l.qtd); if (c == null) sem++; else if (q) tot += c * q; });
@@ -56,7 +56,7 @@
     return out.join('\n');
   }
   function preencher(r, origem, nomeSugerido) {
-    F = novoF(); F.origem = origem; F.nome = nomeSugerido || r.nome || ''; F.unidades = r.unidades ? String(r.unidades) : ''; F.peso = r.peso_total_g ? String(r.peso_total_g) : ''; F.obs = r.observacao || '';
+    F = novoF(); F.origem = origem; F.nome = nomeSugerido || r.nome || ''; F.unidades = r.unidades ? window.petitFmt(r.unidades) : ''; F.peso = r.peso_total_g ? window.petitFmt(r.peso_total_g) : ''; F.obs = r.observacao || '';
     F.itens = r.itens.map(i => { const l = linha(i); if (/^agua destilada/.test(nz(l.nome)) && l.custo === '' && !l.mp_id) l.custo = '0'; return l; });
     if (r.avisos && r.avisos.length) aviso(r.avisos.join(' '), false);
     aba = 'editor'; desenhar();
@@ -137,8 +137,8 @@
     set(j, c, v) { const l = F.itens[j]; l[c] = v; if (c === 'nome' && !l.mp_id) l.mp_id = acharMp(v); if (c === 'mp_id' && v) { const m = mpDe(v); if (m) { l.un = m.unidade_base; l.nome = m.nome; } } desenhar(); },
     add() { F.itens.push(linha({})); desenhar(); },
     rem(j) { F.itens.splice(j, 1); desenhar(); },
-    editar(id) { const f = D.formulas.find(x => x.id === id); F = novoF(); F.id = id; F.sku = f.sku || ''; F.nome = f.nome; F.unidades = String(Number(f.unidades_por_receita)); F.peso = f.peso_total_g == null ? '' : String(Number(f.peso_total_g)); F.obs = f.observacao || ''; F.origem = f.origem;
-      F.itens = D.itens.filter(i => i.formula_id === id).map(i => { const m = mpDe(i.materia_prima_id); return { nome: m ? m.nome : '', mp_id: i.materia_prima_id, tipo: '', qtd: String(Number(i.quantidade)), un: i.unidade, grupo: i.grupo || '', custo: '', obs: '' }; }); aba = 'editor'; desenhar(); },
+    editar(id) { const f = D.formulas.find(x => x.id === id); F = novoF(); F.id = id; F.sku = f.sku || ''; F.nome = f.nome; F.unidades = window.petitFmt(Number(f.unidades_por_receita)); F.peso = f.peso_total_g == null ? '' : String(Number(f.peso_total_g)); F.obs = f.observacao || ''; F.origem = f.origem;
+      F.itens = D.itens.filter(i => i.formula_id === id).map(i => { const m = mpDe(i.materia_prima_id); return { nome: m ? m.nome : '', mp_id: i.materia_prima_id, tipo: '', qtd: window.petitFmt(Number(i.quantidade)), un: i.unidade, grupo: i.grupo || '', custo: '', obs: '' }; }); aba = 'editor'; desenhar(); },
     versoes(k) { verSku = verSku === k ? null : k; desenhar(); },
     async salvar() {
       const un = numero(F.unidades); if (!F.nome.trim()) return aviso('Informe o nome da fórmula.', false); if (!(un > 0)) return aviso('Informe quantas unidades saem da receita.', false);

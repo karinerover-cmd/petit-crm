@@ -9,7 +9,7 @@
   const brl = n => (n == null || n === '' || isNaN(n)) ? '—' : Number(n).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const pct = n => (n == null || isNaN(n)) ? '—' : (Number(n) * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%';
   const dataBR = d => d ? String(d).slice(0, 10).split('-').reverse().join('/') : '';
-  const numero = v => { const n = parseFloat(String(v == null ? '' : v).replace(',', '.')); return isNaN(n) ? null : n; };
+  const numero = v => window.petitNumero(v);   // formato brasileiro: 1.234,56 · 7.200 · 0,035 (leitor único do app)
   const TIPOS = { taxa_pagamento: 'Taxa de cartão/Pix', comissao_canal: 'Comissão do canal', comissao_plataforma: 'Comissão da plataforma', frete_absorvido: 'Frete absorvido', perda_extravio: 'Perda/extravio', embalagem_envio_fallback: 'Embalagem de envio (valor médio)' };
   const ORIGEM = { registrado: ['registrado na venda', ''], estimado: ['estimado (configuração)', 'badge-blue'], sem_regra: ['sem regra (R$ 0)', ''], kit: ['kit de embalagem', ''], kit_incompleto: ['kit sem custo completo → valor médio', 'badge-pink'], fallback: ['valor médio (sem kit)', 'badge-pink'] };
   let D = { margens: [], vendas: [], canais: [], config: [], mps: [], emb: [], kit: [] }, aba = 'vendas', filtroCanal = '', aberto = null, kitCanal = '', kitLinhas = [], regraEdit = null;
@@ -84,7 +84,7 @@
   // ---------- aba: kit de embalagem de envio ----------
   function tabKit() {
     const kitDoCanal = c => D.kit.filter(k => (c ? canalNome(k.canal_id) === c : k.canal_id === null));
-    if (kitCanal === '' && !kitLinhas.length) kitLinhas = kitDoCanal('').map(k => ({ id: k.embalagem_envio_id, qtd: String(Number(k.quantidade_por_venda)) }));
+    if (kitCanal === '' && !kitLinhas.length) kitLinhas = kitDoCanal('').map(k => ({ id: k.embalagem_envio_id, qtd: window.petitFmt(Number(k.quantidade_por_venda)) }));
     const opt = D.emb.filter(m => m.ativo !== false);
     return `<p class="td-muted">Quantos itens de embalagem de envio uma venda desse canal consome. O custo vem do cadastro em 🧾 Notas fiscais → Matérias-primas (nunca digitado aqui). Um canal sem kit próprio usa o kit <b>padrão</b>.</p>
       <div class="table-toolbar"><select onchange="PetitMG.kitCanal(this.value)"><option value=""${kitCanal === '' ? ' selected' : ''}>Padrão (canais sem kit próprio)</option>${D.canais.map(c => `<option${c.nome === kitCanal ? ' selected' : ''}>${esc(c.nome)}</option>`).join('')}</select></div>
@@ -112,7 +112,7 @@
       if (!confirm('Excluir esta regra? Vendas já calculadas não mudam; só as próximas deixam de usá-la.')) return;
       try { await rpc('gestao_excluir_despesa_variavel', { id }); await carregar(); aviso('Regra excluída.', true); desenhar(); } catch (e) { aviso(e.message, false); }
     },
-    kitCanal(c) { kitCanal = c; kitLinhas = D.kit.filter(k => (c ? canalNome(k.canal_id) === c : k.canal_id === null)).map(k => ({ id: k.embalagem_envio_id, qtd: String(Number(k.quantidade_por_venda)) })); desenhar(); },
+    kitCanal(c) { kitCanal = c; kitLinhas = D.kit.filter(k => (c ? canalNome(k.canal_id) === c : k.canal_id === null)).map(k => ({ id: k.embalagem_envio_id, qtd: window.petitFmt(Number(k.quantidade_por_venda)) })); desenhar(); },
     kitSet(j, c, v) { kitLinhas[j][c] = v; desenhar(); }, kitAdd() { kitLinhas.push({ id: '', qtd: '1' }); desenhar(); }, kitRem(j) { kitLinhas.splice(j, 1); desenhar(); },
     async kitSalvar() {
       const itens = kitLinhas.filter(l => l.id).map(l => ({ embalagem_envio_id: l.id, quantidade: numero(l.qtd) }));
