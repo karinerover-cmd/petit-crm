@@ -11,7 +11,7 @@
   const numero = v => window.petitNumero(v);   // formato brasileiro: 1.234,56 · 7.200 · 0,035 (leitor único do app)
   const arred90 = p => Math.ceil(Number(p) + 0.10) - 0.10;            // preços terminados em ,90 (ex.: 36,42 → 36,90)
   const STATUS = { pendente: ['aguardando aprovação', 'badge-pink'], aprovado: ['aprovado', 'badge-blue'], ajustado: ['ajustado', 'badge-blue'], descartado: ['descartado', ''] };
-  let D = { produtos: [], formulas: [], mps: [], emb: [], lotes: [], cfg: { valor_hora_mao_de_obra: 14.03, markup_varejo: 3 } }, aba = 'novo', soPendentes = true, calc = null, embSku = '', embLinhas = [], aberto = null, NP = null, npCalc = null, npSeq = 0;
+  let D = { produtos: [], formulas: [], mps: [], emb: [], lotes: [], cfg: { valor_hora_mao_de_obra: 14.03, markup_varejo: 3 } }, aba = 'novo', soPendentes = true, calc = null, embSku = '', embLinhas = [], aberto = null, NP = null, npCalc = null, npSeq = 0, usoEdit = {};
 
   async function ler(t, col, asc) {
     let q = sb().from(t).select('*'); if (col) q = q.order(col, { ascending: asc !== false });
@@ -19,7 +19,10 @@
   }
   async function carregar() {
     const [produtos, formulas, mps, emb, lotes, cfg] = await Promise.all([ler('produtos', 'sku'), ler('formulas', 'criado_em', false), ler('materias_primas', 'nome'), ler('produto_embalagem'), ler('lotes_fabricacao', 'criado_em', false), ler('configuracao_precificacao')]);
-    D = { produtos, formulas, mps, emb, lotes, cfg: cfg[0] || D.cfg };
+    let formulaItens = [], mpLotes = [], usos = [], temFase11 = true;
+    try { [formulaItens, mpLotes, usos] = await Promise.all([ler('formula_itens'), ler('materia_prima_lotes'), ler('lote_fabricacao_materia_prima_lote')]); }
+    catch (e) { temFase11 = false; }   // Fase 11 ainda não rodada: a tela funciona sem a rastreabilidade
+    D = { produtos, formulas, mps, emb, lotes, cfg: cfg[0] || D.cfg, formulaItens, mpLotes, usos, temFase11 };
   }
   async function rpc(nome, args) { const { data, error } = await sb().rpc(nome, args); if (error) throw new Error(error.message); return data; }
   function aviso(t, ok) { const d = document.createElement('div'); d.textContent = t; d.style.cssText = 'position:fixed;bottom:44px;right:20px;max-width:440px;background:' + (ok === false ? '#A32D2D' : '#2e7d32') + ';color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;z-index:99998;box-shadow:0 4px 16px rgba(0,0,0,.2)'; document.body.appendChild(d); setTimeout(() => d.remove(), 6000); }
@@ -43,6 +46,31 @@
       <div class="stat-card"><div class="stat-label">Preço sugerido (× ${num4(c.markup)})</div><div class="stat-val" style="font-size:18px">${sug == null ? '—' : brl(sug)}</div><div class="stat-sub">${sug == null ? '' : 'arredondado: ' + brl(arred90(sug)) + ' · '}${c.produto_novo ? 'produto novo: começa sem preço' : 'preço atual ' + brl(c.preco_atual)}</div></div></div>
       ${c.custo_incompleto ? `<div class="alert" style="margin-bottom:10px">⚠️ Custo incompleto — sem custo cadastrado: <b>${esc(c.itens_sem_custo)}</b>. O preço sugerido não é calculado. Preencha os custos em Notas fiscais → Matérias-primas.</div>` : ''}
       <details><summary class="td-muted">Ver o custo de cada item</summary><div class="table-card" style="margin-top:8px">${detalhe(c)}</div></details>`;
+  }
+
+  // ---------- rastreabilidade: lotes de matéria-prima usados numa produção (Fase 11) ----------
+  function blocoLotesUsados(l) {
+    if (!D.temFase11) return '';
+    const ingredientes = D.formulaItens.filter(fi => fi.formula_id === l.formula_id)
+      .map(fi => ({ materia_prima_id: fi.materia_prima_id, nome: (D.mps.find(m => m.id === fi.materia_prima_id) || {}).nome || '?' }));
+    if (!usoEdit[l.id]) {
+      const salvos = D.usos.filter(u => u.lote_fabricacao_id === l.id);
+      usoEdit[l.id] = ingredientes.map(ing => {
+        const lotesDoIngrediente = D.mpLotes.filter(ml => ml.materia_prima_id === ing.materia_prima_id);
+        const jaMarcados = salvos.filter(u => lotesDoIngrediente.some(ml => ml.id === u.materia_prima_lote_id)).map(u => u.materia_prima_lote_id);
+        return { materia_prima_id: ing.materia_prima_id, nome: ing.nome, lotes: jaMarcados.length ? jaMarcados.slice() : [''] };
+      });
+    }
+    const lotesDe = ing => D.mpLotes.filter(ml => ml.materia_prima_id === ing.materia_prima_id);
+    const opt = (ing, v) => lotesDe(ing).map(ml => `<option value="${ml.id}"${ml.id === v ? ' selected' : ''}>${dataBR(ml.data_compra)}${ml.numero_lote_fornecedor ? ' · ' + esc(ml.numero_lote_fornecedor) : ''}${ml.data_validade ? ' · val. ' + dataBR(ml.data_validade) : ''}</option>`).join('');
+    return `<div class="table-card" style="padding:14px;margin-top:10px"><b>🧪 Lotes de matéria-prima usados nesta produção</b>
+      <div class="td-muted">Opcional — ajuda a rastrear se algum ingrediente der problema depois.</div>
+      ${!ingredientes.length ? '<div class="td-muted" style="margin-top:8px">A fórmula deste lote não tem ingredientes cadastrados.</div>' : usoEdit[l.id].map((ing, i) => `
+      <div style="margin-top:10px"><b style="font-size:13px">${esc(ing.nome)}</b>${!lotesDe(ing).length ? '<div class="td-muted">nenhum lote de compra cadastrado para esta matéria-prima ainda</div>' :
+        ing.lotes.map((v, j) => `<div style="display:flex;gap:6px;align-items:center;margin-top:4px"><select onchange="PetitLT.usoSet('${l.id}',${i},${j},this.value)"><option value="">Escolha o lote…</option>${opt(ing, v)}</select>
+          <button class="btn-icon" onclick="PetitLT.usoRem('${l.id}',${i},${j})">✕</button></div>`).join('') +
+        `<button class="btn btn-outline btn-sm" style="margin-top:4px" onclick="PetitLT.usoAdd('${l.id}',${i})">+ outro lote deste ingrediente</button>`}</div>`).join('')}
+      ${ingredientes.length ? `<div style="margin-top:12px"><button class="btn btn-primary btn-sm" onclick="PetitLT.salvarUsos('${l.id}')">Salvar lotes usados</button></div>` : ''}</div>`;
   }
 
   // ---------- abas ----------
@@ -71,7 +99,7 @@
       const ver = `<button class="btn-icon" title="Ver detalhes" onclick="PetitLT.ver('${l.id}')">🔍</button> <button class="btn-icon" title="Excluir lote" onclick="PetitLT.excluir('${l.id}')">🗑</button>`;
       let h = `<tr><td>${dataBR(l.data_fabricacao)}</td><td>${esc(l.sku)}<div class="td-muted">${esc(nomeProd(l.sku))}</div></td><td>${l.quantidade_produzida}<div class="td-muted">${num4(l.horas_trabalhadas)} h</div></td><td>${brl(l.custo_unitario)}</td>
         <td>${sug == null ? '—' : brl(sug)}</td><td>${p ? brl(p.preco) : '—'}${l.preco_aprovado != null ? '<div class="td-muted">aplicado ' + brl(l.preco_aprovado) + '</div>' : ''}</td><td><span class="badge ${st[1]}">${st[0]}</span></td><td>${acoes}${acoes ? '<div style="margin-top:4px">' + ver + '</div>' : ver}</td></tr>`;
-      if (aberto === l.id) h += `<tr><td colspan="8" style="background:var(--surface2)">${resumo(Object.assign({}, l, { quantidade: l.quantidade_produzida, horas: l.horas_trabalhadas, formula_versao: l.formula_versao, preco_atual: p ? p.preco : null, detalhe: l.detalhe, itens_sem_custo: l.itens_sem_custo, custo_incompleto: l.custo_incompleto }))}${l.observacao ? '<div class="td-muted">Obs.: ' + esc(l.observacao) + '</div>' : ''}</td></tr>`;
+      if (aberto === l.id) h += `<tr><td colspan="8" style="background:var(--surface2)">${resumo(Object.assign({}, l, { quantidade: l.quantidade_produzida, horas: l.horas_trabalhadas, formula_versao: l.formula_versao, preco_atual: p ? p.preco : null, detalhe: l.detalhe, itens_sem_custo: l.itens_sem_custo, custo_incompleto: l.custo_incompleto }))}${l.observacao ? '<div class="td-muted">Obs.: ' + esc(l.observacao) + '</div>' : ''}${blocoLotesUsados(l)}</td></tr>`;
       return h;
     }).join('')}</tbody></table></div>`;
   }
@@ -188,6 +216,13 @@
     },
     filtro(v) { soPendentes = v; desenhar(); },
     ver(id) { aberto = aberto === id ? null : id; desenhar(); },
+    usoSet(loteId, i, j, v) { usoEdit[loteId][i].lotes[j] = v; desenhar(); },
+    usoAdd(loteId, i) { usoEdit[loteId][i].lotes.push(''); desenhar(); },
+    usoRem(loteId, i, j) { const arr = usoEdit[loteId][i].lotes; arr.splice(j, 1); if (!arr.length) arr.push(''); desenhar(); },
+    async salvarUsos(loteId) {
+      const itens = usoEdit[loteId].flatMap(ing => ing.lotes.filter(Boolean)).map(materia_prima_lote_id => ({ materia_prima_lote_id }));
+      try { await rpc('gestao_salvar_lotes_usados', { p: { lote_fabricacao_id: loteId, itens } }); await carregar(); delete usoEdit[loteId]; aviso('Lotes de matéria-prima registrados.', true); desenhar(); } catch (e) { aviso(e.message, false); }
+    },
     async aprovar(id) {
       const l = D.lotes.find(x => x.id === id), p = produto(l.sku);
       if (!confirm('Aplicar ' + brl(l.preco_sugerido_varejo) + ' como preço de venda de ' + l.sku + ' (hoje ' + brl(p && p.preco) + ')?')) return;
