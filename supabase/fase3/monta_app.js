@@ -6,6 +6,7 @@ const camada = fs.readFileSync(__dirname + '/camada_supabase.js', 'utf8');
 const nfe = fs.readFileSync(__dirname + '/../fase6/nfe.js', 'utf8'), telaNotas = fs.readFileSync(__dirname + '/../fase6/tela_notas.js', 'utf8');   // Fase 6b
 const soapcalc = fs.readFileSync(__dirname + '/../fase7/soapcalc.js', 'utf8'), precificacao = fs.readFileSync(__dirname + '/../fase7/precificacao.js', 'utf8'), telaFormulas = fs.readFileSync(__dirname + '/../fase7/tela_formulas.js', 'utf8');   // Fase 7
 const telaLotes = fs.readFileSync(__dirname + '/../fase8/tela_lotes.js', 'utf8');   // Fase 8
+const telaMargem = fs.readFileSync(__dirname + '/../fase9/tela_margem.js', 'utf8');   // Fase 9
 
 function troca(de, para, rotulo) {
   const n = h.split(de).length - 1;
@@ -24,6 +25,9 @@ troca("  d.setDate(d.getDate()-1);\n  return d;", "  d.setDate(d.getDate()-1);\n
 troca("onclick=\"excluirCliente(${c.id})\"", "onclick=\"excluirCliente('${c.id}')\"", 'excluirCliente');
 
 const css = `<style>
+/* Fase 6+: o menu ganhou várias seções novas (Notas fiscais, Fórmulas, Lotes e preços, Margem de vendas) e passou a não caber
+   na altura da tela; o menu original não tinha rolagem própria (só ele, o conteúdo da página rola normalmente). */
+.sb-nav{overflow-y:auto;min-height:0}
 #gs-login{position:fixed;inset:0;z-index:99999;background:#fdf8f6;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif}
 #gs-login form{background:#fff;border:1px solid #eadfd9;border-radius:14px;padding:28px;width:min(360px,92vw);box-shadow:0 8px 30px rgba(0,0,0,.08)}
 #gs-login h1{font-size:20px;margin:0 0 4px;color:#a63d63}#gs-login p{margin:0 0 16px;color:#777;font-size:13px}
@@ -46,7 +50,7 @@ const overlay = `
 troca('<body>', '<body>' + overlay, 'body');
 
 // 4) camada Supabase depois do script principal
-troca('</script>\n</body>', '</script>\n<script>\n' + camada + '\n</script>\n<script>\n' + nfe + '\n</script>\n<script>\n' + telaNotas + '\n</script>\n<script>\n' + soapcalc + '\n' + precificacao + '\n</script>\n<script>\n' + telaFormulas + '\n</script>\n<script>\n' + telaLotes + '\n</script>\n</body>', 'fim');
+troca('</script>\n</body>', '</script>\n<script>\n' + camada + '\n</script>\n<script>\n' + nfe + '\n</script>\n<script>\n' + telaNotas + '\n</script>\n<script>\n' + soapcalc + '\n' + precificacao + '\n</script>\n<script>\n' + telaFormulas + '\n</script>\n<script>\n' + telaLotes + '\n</script>\n<script>\n' + telaMargem + '\n</script>\n</body>', 'fim');
 
 fs.writeFileSync(dir + 'petit_sabo_gestao_supabase.html', h);
 console.log('gerado:', (h.length / 1024).toFixed(1) + ' KB');
