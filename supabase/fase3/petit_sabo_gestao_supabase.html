@@ -303,14 +303,30 @@ body{padding-bottom:30px}
       <!-- Adicionar item -->
       <div class="table-card" style="padding:18px;margin-bottom:14px;">
         <div style="font-size:14px;font-weight:600;margin-bottom:12px;">🛒 Adicionar ao carrinho</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);cursor:pointer;margin-bottom:10px">
+          <input type="checkbox" id="v-avulso-toggle" onchange="toggleAvulsoG()" style="width:auto;accent-color:var(--pink)"> Venda avulsa (refil / encomenda / personalizado, sem produto cadastrado)
+        </label>
         <div class="grid2f">
-          <div class="field"><label>Produto</label>
+          <div class="field"><label id="v-produto-label">Produto</label>
             <select id="v-produto" onchange="calcVenda()"><option value="">Selecione...</option></select>
+            <select id="v-avulso-tipo" onchange="calcVenda()" style="display:none;">
+              <option value="Refil">Refil</option>
+              <option value="Encomenda">Encomenda</option>
+              <option value="Personalizado">Personalizado</option>
+            </select>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
             <div class="field"><label>Qtd</label><input type="number" id="v-qtd" value="1" min="1" oninput="calcVenda()"></div>
             <div class="field"><label>Subtotal</label><input type="text" id="v-total" readonly placeholder="R$ 0,00"></div>
           </div>
+        </div>
+        <div id="v-avulso-campos" style="display:none;">
+          <div class="field"><label>Descrição</label><input type="text" id="v-avulso-desc" placeholder="ex.: Refil Perfume Capilar Bia 1L"></div>
+          <div class="grid2f">
+            <div class="field"><label>Preço unitário</label><input type="number" id="v-avulso-preco" min="0" step="0.01" oninput="calcVenda()" placeholder="0,00"></div>
+            <div class="field"><label>Custo unitário <span style="font-weight:400;color:var(--muted)">(opcional)</span></label><input type="number" id="v-avulso-custo" min="0" step="0.01" placeholder="0,00"></div>
+          </div>
+          <div class="field"><label>Observação <span style="font-weight:400;color:var(--muted)">(opcional — aroma escolhido, evento, etc.)</span></label><textarea id="v-avulso-obs" placeholder="ex.: aroma lavanda, para o evento de casamento da Ana"></textarea></div>
         </div>
         <div style="display:flex;gap:8px;margin-bottom:14px;align-items:flex-end;">
           <div style="flex:1;" class="field"><label>Desconto no item</label>
@@ -1130,7 +1146,7 @@ function renderHistorico(){
     <thead><tr><th>Data</th><th>Itens</th><th>Total</th><th>Canal</th><th>Cliente</th><th>Origem</th><th></th></tr></thead>
     <tbody>${list.map(v=>{
       const itensHtml=v.itens
-        ?v.itens.map(i=>`<div class="td-muted">• ${i.nome} ×${i.qtd}${i.desconto>0?' (−R$'+parseFloat(i.desconto).toFixed(2)+')':''} = R$ ${parseFloat(i.subtotal).toFixed(2)}</div>`).join('')
+        ?v.itens.map(i=>`<div class="td-muted">• ${i.nome} ×${i.qtd}${i.desconto>0?' (−R$'+parseFloat(i.desconto).toFixed(2)+')':''} = R$ ${parseFloat(i.subtotal).toFixed(2)}</div>${i.observacaoAvulsa?`<div class="td-muted" style="font-style:italic">${i.observacaoAvulsa}</div>`:''}`).join('')
         :`<div>${v.produtoNome||''}</div><div class="td-muted">×${v.qtd||1}</div>`;
       const vid=v.id;
       return `<tr>
@@ -1944,7 +1960,7 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
   async function buscar() {
     return { produtos: await todas('produtos', '*', { col: 'sku' }), canais: await todas('canais', '*', { col: 'nome' }),
       clientes: await todas('clientes', 'id,nome,telefone,email', { col: 'nome' }),
-      vendas: await todas('vendas', '*, canais(nome), clientes(nome,telefone,email), venda_itens(sku,produto_nome,quantidade,preco_unitario,desconto,desconto_label,subtotal)', { col: 'data_venda', asc: false }) };
+      vendas: await todas('vendas', '*, canais(nome), clientes(nome,telefone,email), venda_itens(sku,produto_nome,quantidade,preco_unitario,desconto,desconto_label,subtotal,observacao_avulsa)', { col: 'data_venda', asc: false }) };
   }
 
   function mapear(bruto) {
@@ -1958,7 +1974,7 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
       const itens = (v.venda_itens || []).map(i => {
         const p = porSku[i.sku] || {};
         return { pid: i.sku || '', nome: i.produto_nome, colecao: p.colecao || '', cat: p.cat || '', preco: num(i.preco_unitario), qtd: i.quantidade,
-          desconto: num(i.desconto), descontoLabel: i.desconto_label || '', subtotal: num(i.subtotal) };
+          desconto: num(i.desconto), descontoLabel: i.desconto_label || '', subtotal: num(i.subtotal), observacaoAvulsa: i.observacao_avulsa || '' };
       });
       const c = v.clientes || {};
       const base = { id: v.id, data: v.data_venda, total: num(v.valor), descontoTotal: num(v.desconto_venda), canal: (v.canais && v.canais.nome) || '',
@@ -2096,6 +2112,64 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
     };
 
     // — Vendas —
+    // Fase 16: venda avulsa (refil/encomenda/personalizado sem produto cadastrado) — mesmo carrinho, item marcado com avulso:true.
+    window.toggleAvulsoG = function () {
+      const avulso = $('v-avulso-toggle').checked;
+      $('v-produto').style.display = avulso ? 'none' : '';
+      $('v-avulso-tipo').style.display = avulso ? '' : 'none';
+      $('v-produto-label').textContent = avulso ? 'Tipo' : 'Produto';
+      $('v-avulso-campos').style.display = avulso ? 'block' : 'none';
+      calcVenda();
+    };
+    window.calcVenda = function () {
+      const avulso = $('v-avulso-toggle') && $('v-avulso-toggle').checked;
+      const qtd = parseFloat($('v-qtd').value) || 1;
+      const desc = parseFloat($('v-desc').value) || 0;
+      const tipoDesc = $('v-desc-tipo').value;
+      let preco;
+      if (avulso) { preco = parseFloat($('v-avulso-preco').value) || 0; }
+      else { const p = produtos.find(x => String(x.id) === String($('v-produto').value)); if (!p) { $('v-total').value = ''; return; } preco = p.preco; }
+      const base = preco * qtd;
+      const descVal = tipoDesc === '%' ? base * (desc / 100) : desc;
+      $('v-total').value = 'R$ ' + Math.max(0, base - descVal).toFixed(2);
+    };
+    window.adicionarAoCarrinhoG = function () {
+      const avulso = $('v-avulso-toggle') && $('v-avulso-toggle').checked;
+      const qtd = parseInt($('v-qtd').value) || 1;
+      const desc = parseFloat($('v-desc').value) || 0;
+      const tipoDesc = $('v-desc-tipo').value;
+      const erroEl = $('g-venda-erro');
+      const mostrarErroAdd = msg => { if (erroEl) { erroEl.textContent = msg; erroEl.style.display = 'block'; setTimeout(() => erroEl.style.display = 'none', 3000); } };
+      if (avulso) {
+        const tipoAvulso = $('v-avulso-tipo').value;
+        const descAvulsa = $('v-avulso-desc').value.trim();
+        const preco = parseFloat($('v-avulso-preco').value) || 0;
+        const custoManualStr = $('v-avulso-custo').value;
+        const custoManual = custoManualStr === '' ? null : parseFloat(custoManualStr);
+        const obsAvulsa = $('v-avulso-obs').value.trim() || null;
+        if (!descAvulsa) { mostrarErroAdd('Descreva o item avulso.'); return; }
+        if (preco <= 0) { mostrarErroAdd('Informe o preço do item avulso.'); return; }
+        const base = preco * qtd;
+        const descVal = tipoDesc === '%' ? base * (desc / 100) : desc;
+        const descLabel = desc > 0 ? (tipoDesc === '%' ? desc + '%' : 'R$ ' + descVal.toFixed(2)) : '';
+        const subtotal = Math.max(0, base - descVal);
+        carrinhoG.push({ avulso: true, pid: null, nome: descAvulsa, tipoAvulso, descricaoAvulsa: descAvulsa, observacaoAvulsa: obsAvulsa, custoManual, preco, qtd, desconto: descVal, descontoLabel: descLabel, subtotal });
+        $('v-avulso-desc').value = ''; $('v-avulso-preco').value = ''; $('v-avulso-custo').value = ''; $('v-avulso-obs').value = '';
+      } else {
+        const pid = $('v-produto').value;
+        const p = produtos.find(x => String(x.id) === String(pid));
+        if (!p) { mostrarErroAdd('Selecione um produto.'); return; }
+        if (qtd > p.qtd) { mostrarErroAdd('Estoque insuficiente (' + p.qtd + ' un.).'); return; }
+        const base = p.preco * qtd;
+        const descVal = tipoDesc === '%' ? base * (desc / 100) : desc;
+        const descLabel = desc > 0 ? (tipoDesc === '%' ? desc + '%' : 'R$ ' + descVal.toFixed(2)) : '';
+        const subtotal = Math.max(0, base - descVal);
+        carrinhoG.push({ pid: p.id, nome: p.nome, colecao: p.colecao, cat: p.cat, preco: p.preco, qtd, desconto: descVal, descontoLabel: descLabel, subtotal });
+        $('v-produto').value = '';
+      }
+      $('v-qtd').value = '1'; $('v-desc').value = '0'; $('v-total').value = '';
+      renderCarrinhoG();
+    };
     window.finalizarVendaG = async function () {
       const data = $('v-data').value, canal = $('v-canal').value, obs = $('v-obs').value.trim();
       const cliNome = $('v-cli-nome').value.trim(), cliTel = $('v-cli-tel').value.trim(), cliEmail = $('v-cli-email').value.trim();
@@ -2104,6 +2178,7 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
       if (!canal) { mostrarErro('Selecione o canal de venda.'); return; }
       if (!carrinhoG.length) { mostrarErro('Adicione pelo menos um produto ao carrinho.'); return; }
       for (const item of carrinhoG) {
+        if (item.avulso) continue;   // venda avulsa não tem produto/estoque pra checar
         const p = produtos.find(x => String(x.id) === String(item.pid));
         if (!p || p.qtd < item.qtd) { mostrarErro('Estoque insuficiente para: ' + item.nome); return; }
       }
@@ -2111,7 +2186,9 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
       const cartDesc = parseFloat(($('g-cart-desc') || {}).value) || 0, cartTipo = (($('g-cart-desc-tipo') || {}).value) || 'R$';
       const cartDescVal = cartTipo === '%' ? subtotalGeral * (cartDesc / 100) : cartDesc;
       const payload = { data, canal, obs, origem: 'gestao', desconto_venda: r2(cartDescVal),
-        itens: carrinhoG.map(i => ({ sku: i.pid, nome: i.nome, preco: i.preco, qtd: i.qtd, desconto: r2(i.desconto), label: i.descontoLabel })) };
+        itens: carrinhoG.map(i => i.avulso
+          ? { avulso: true, tipo_avulso: i.tipoAvulso, descricao_avulsa: i.descricaoAvulsa, observacao_avulsa: i.observacaoAvulsa, preco: i.preco, qtd: i.qtd, desconto: r2(i.desconto), label: i.descontoLabel, custo_unitario_manual: i.custoManual }
+          : { sku: i.pid, nome: i.nome, preco: i.preco, qtd: i.qtd, desconto: r2(i.desconto), label: i.descontoLabel }) };
       const sel = $('v-cli-sel').value;
       if (sel) payload.cliente_id = sel; else if (cliNome) payload.cliente = { nome: cliNome, tel: cliTel, email: cliEmail, salvar };
       const r = await agir(() => rpc('gestao_registrar_venda', { p: payload }));
@@ -2121,6 +2198,7 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
       renderCarrinhoG();
       ['v-canal', 'v-obs', 'v-cli-nome', 'v-cli-tel', 'v-cli-email', 'v-cli-sel'].forEach(i => $(i).value = '');
       $('v-qtd').value = '1'; $('v-desc').value = '0'; $('v-total').value = ''; $('v-salvar-cli').checked = false;
+      $('v-avulso-toggle').checked = false; $('v-avulso-obs').value = ''; toggleAvulsoG();
       renderProdutosSel();
       const a = $('alert-venda'); a.style.display = 'block'; setTimeout(() => a.style.display = 'none', 3000);
     };

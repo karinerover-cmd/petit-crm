@@ -27,6 +27,77 @@ troca("const d=new Date(parseInt(y),parseInt(m)-1+parseInt(meses),1);", "const d
 troca("  d.setDate(d.getDate()-1);\n  return d;", "  d.setDate(d.getDate()-1);\n  if(d.getMonth()===1) d.setDate(28); // fevereiro: sempre dia 28\n  return d;", 'calcVencimento fev');
 // 3) ids de cliente agora são texto (uuid): precisam de aspas no onclick
 troca("onclick=\"excluirCliente(${c.id})\"", "onclick=\"excluirCliente('${c.id}')\"", 'excluirCliente');
+// 3b) Fase 16b: observação do item avulso (aroma escolhido, evento, etc.) aparece no histórico
+troca(
+"?v.itens.map(i=>`<div class=\"td-muted\">• ${i.nome} ×${i.qtd}${i.desconto>0?' (−R$'+parseFloat(i.desconto).toFixed(2)+')':''} = R$ ${parseFloat(i.subtotal).toFixed(2)}</div>`).join('')",
+"?v.itens.map(i=>`<div class=\"td-muted\">• ${i.nome} ×${i.qtd}${i.desconto>0?' (−R$'+parseFloat(i.desconto).toFixed(2)+')':''} = R$ ${parseFloat(i.subtotal).toFixed(2)}</div>${i.observacaoAvulsa?`<div class=\"td-muted\" style=\"font-style:italic\">${i.observacaoAvulsa}</div>`:''}`).join('')",
+'histórico observação avulsa');
+// 3c) Fase 16: opção de venda avulsa (refil/encomenda/personalizado sem produto cadastrado) no formulário de venda
+troca(
+`      <div class="table-card" style="padding:18px;margin-bottom:14px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:12px;">🛒 Adicionar ao carrinho</div>
+        <div class="grid2f">
+          <div class="field"><label>Produto</label>
+            <select id="v-produto" onchange="calcVenda()"><option value="">Selecione...</option></select>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="field"><label>Qtd</label><input type="number" id="v-qtd" value="1" min="1" oninput="calcVenda()"></div>
+            <div class="field"><label>Subtotal</label><input type="text" id="v-total" readonly placeholder="R$ 0,00"></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:14px;align-items:flex-end;">
+          <div style="flex:1;" class="field"><label>Desconto no item</label>
+            <input type="number" id="v-desc" value="0" min="0" step="0.01" oninput="calcVenda()" placeholder="0" style="margin-bottom:0;">
+          </div>
+          <div class="field"><label>&nbsp;</label>
+            <select id="v-desc-tipo" onchange="calcVenda()" style="margin-bottom:0;width:85px;">
+              <option value="R$">R$</option>
+              <option value="%">%</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-outline" style="width:100%;" onclick="adicionarAoCarrinhoG()">+ Adicionar ao carrinho</button>
+      </div>`,
+`      <div class="table-card" style="padding:18px;margin-bottom:14px;">
+        <div style="font-size:14px;font-weight:600;margin-bottom:12px;">🛒 Adicionar ao carrinho</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);cursor:pointer;margin-bottom:10px">
+          <input type="checkbox" id="v-avulso-toggle" onchange="toggleAvulsoG()" style="width:auto;accent-color:var(--pink)"> Venda avulsa (refil / encomenda / personalizado, sem produto cadastrado)
+        </label>
+        <div class="grid2f">
+          <div class="field"><label id="v-produto-label">Produto</label>
+            <select id="v-produto" onchange="calcVenda()"><option value="">Selecione...</option></select>
+            <select id="v-avulso-tipo" onchange="calcVenda()" style="display:none;">
+              <option value="Refil">Refil</option>
+              <option value="Encomenda">Encomenda</option>
+              <option value="Personalizado">Personalizado</option>
+            </select>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="field"><label>Qtd</label><input type="number" id="v-qtd" value="1" min="1" oninput="calcVenda()"></div>
+            <div class="field"><label>Subtotal</label><input type="text" id="v-total" readonly placeholder="R$ 0,00"></div>
+          </div>
+        </div>
+        <div id="v-avulso-campos" style="display:none;">
+          <div class="field"><label>Descrição</label><input type="text" id="v-avulso-desc" placeholder="ex.: Refil Perfume Capilar Bia 1L"></div>
+          <div class="grid2f">
+            <div class="field"><label>Preço unitário</label><input type="number" id="v-avulso-preco" min="0" step="0.01" oninput="calcVenda()" placeholder="0,00"></div>
+            <div class="field"><label>Custo unitário <span style="font-weight:400;color:var(--muted)">(opcional)</span></label><input type="number" id="v-avulso-custo" min="0" step="0.01" placeholder="0,00"></div>
+          </div>
+          <div class="field"><label>Observação <span style="font-weight:400;color:var(--muted)">(opcional — aroma escolhido, evento, etc.)</span></label><textarea id="v-avulso-obs" placeholder="ex.: aroma lavanda, para o evento de casamento da Ana"></textarea></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:14px;align-items:flex-end;">
+          <div style="flex:1;" class="field"><label>Desconto no item</label>
+            <input type="number" id="v-desc" value="0" min="0" step="0.01" oninput="calcVenda()" placeholder="0" style="margin-bottom:0;">
+          </div>
+          <div class="field"><label>&nbsp;</label>
+            <select id="v-desc-tipo" onchange="calcVenda()" style="margin-bottom:0;width:85px;">
+              <option value="R$">R$</option>
+              <option value="%">%</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-outline" style="width:100%;" onclick="adicionarAoCarrinhoG()">+ Adicionar ao carrinho</button>
+      </div>`, 'venda avulsa (formulário)');
 
 const css = `<style>
 /* Fase 6+: o menu ganhou várias seções novas (Notas fiscais, Fórmulas, Lotes e preços, Margem de vendas) e passou a não caber

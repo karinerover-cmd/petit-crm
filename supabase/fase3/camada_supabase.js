@@ -27,7 +27,7 @@
   async function buscar() {
     return { produtos: await todas('produtos', '*', { col: 'sku' }), canais: await todas('canais', '*', { col: 'nome' }),
       clientes: await todas('clientes', 'id,nome,telefone,email', { col: 'nome' }),
-      vendas: await todas('vendas', '*, canais(nome), clientes(nome,telefone,email), venda_itens(sku,produto_nome,quantidade,preco_unitario,desconto,desconto_label,subtotal)', { col: 'data_venda', asc: false }) };
+      vendas: await todas('vendas', '*, canais(nome), clientes(nome,telefone,email), venda_itens(sku,produto_nome,quantidade,preco_unitario,desconto,desconto_label,subtotal,observacao_avulsa)', { col: 'data_venda', asc: false }) };
   }
 
   function mapear(bruto) {
@@ -41,7 +41,7 @@
       const itens = (v.venda_itens || []).map(i => {
         const p = porSku[i.sku] || {};
         return { pid: i.sku || '', nome: i.produto_nome, colecao: p.colecao || '', cat: p.cat || '', preco: num(i.preco_unitario), qtd: i.quantidade,
-          desconto: num(i.desconto), descontoLabel: i.desconto_label || '', subtotal: num(i.subtotal) };
+          desconto: num(i.desconto), descontoLabel: i.desconto_label || '', subtotal: num(i.subtotal), observacaoAvulsa: i.observacao_avulsa || '' };
       });
       const c = v.clientes || {};
       const base = { id: v.id, data: v.data_venda, total: num(v.valor), descontoTotal: num(v.desconto_venda), canal: (v.canais && v.canais.nome) || '',
@@ -179,6 +179,64 @@
     };
 
     // — Vendas —
+    // Fase 16: venda avulsa (refil/encomenda/personalizado sem produto cadastrado) — mesmo carrinho, item marcado com avulso:true.
+    window.toggleAvulsoG = function () {
+      const avulso = $('v-avulso-toggle').checked;
+      $('v-produto').style.display = avulso ? 'none' : '';
+      $('v-avulso-tipo').style.display = avulso ? '' : 'none';
+      $('v-produto-label').textContent = avulso ? 'Tipo' : 'Produto';
+      $('v-avulso-campos').style.display = avulso ? 'block' : 'none';
+      calcVenda();
+    };
+    window.calcVenda = function () {
+      const avulso = $('v-avulso-toggle') && $('v-avulso-toggle').checked;
+      const qtd = parseFloat($('v-qtd').value) || 1;
+      const desc = parseFloat($('v-desc').value) || 0;
+      const tipoDesc = $('v-desc-tipo').value;
+      let preco;
+      if (avulso) { preco = parseFloat($('v-avulso-preco').value) || 0; }
+      else { const p = produtos.find(x => String(x.id) === String($('v-produto').value)); if (!p) { $('v-total').value = ''; return; } preco = p.preco; }
+      const base = preco * qtd;
+      const descVal = tipoDesc === '%' ? base * (desc / 100) : desc;
+      $('v-total').value = 'R$ ' + Math.max(0, base - descVal).toFixed(2);
+    };
+    window.adicionarAoCarrinhoG = function () {
+      const avulso = $('v-avulso-toggle') && $('v-avulso-toggle').checked;
+      const qtd = parseInt($('v-qtd').value) || 1;
+      const desc = parseFloat($('v-desc').value) || 0;
+      const tipoDesc = $('v-desc-tipo').value;
+      const erroEl = $('g-venda-erro');
+      const mostrarErroAdd = msg => { if (erroEl) { erroEl.textContent = msg; erroEl.style.display = 'block'; setTimeout(() => erroEl.style.display = 'none', 3000); } };
+      if (avulso) {
+        const tipoAvulso = $('v-avulso-tipo').value;
+        const descAvulsa = $('v-avulso-desc').value.trim();
+        const preco = parseFloat($('v-avulso-preco').value) || 0;
+        const custoManualStr = $('v-avulso-custo').value;
+        const custoManual = custoManualStr === '' ? null : parseFloat(custoManualStr);
+        const obsAvulsa = $('v-avulso-obs').value.trim() || null;
+        if (!descAvulsa) { mostrarErroAdd('Descreva o item avulso.'); return; }
+        if (preco <= 0) { mostrarErroAdd('Informe o preço do item avulso.'); return; }
+        const base = preco * qtd;
+        const descVal = tipoDesc === '%' ? base * (desc / 100) : desc;
+        const descLabel = desc > 0 ? (tipoDesc === '%' ? desc + '%' : 'R$ ' + descVal.toFixed(2)) : '';
+        const subtotal = Math.max(0, base - descVal);
+        carrinhoG.push({ avulso: true, pid: null, nome: descAvulsa, tipoAvulso, descricaoAvulsa: descAvulsa, observacaoAvulsa: obsAvulsa, custoManual, preco, qtd, desconto: descVal, descontoLabel: descLabel, subtotal });
+        $('v-avulso-desc').value = ''; $('v-avulso-preco').value = ''; $('v-avulso-custo').value = ''; $('v-avulso-obs').value = '';
+      } else {
+        const pid = $('v-produto').value;
+        const p = produtos.find(x => String(x.id) === String(pid));
+        if (!p) { mostrarErroAdd('Selecione um produto.'); return; }
+        if (qtd > p.qtd) { mostrarErroAdd('Estoque insuficiente (' + p.qtd + ' un.).'); return; }
+        const base = p.preco * qtd;
+        const descVal = tipoDesc === '%' ? base * (desc / 100) : desc;
+        const descLabel = desc > 0 ? (tipoDesc === '%' ? desc + '%' : 'R$ ' + descVal.toFixed(2)) : '';
+        const subtotal = Math.max(0, base - descVal);
+        carrinhoG.push({ pid: p.id, nome: p.nome, colecao: p.colecao, cat: p.cat, preco: p.preco, qtd, desconto: descVal, descontoLabel: descLabel, subtotal });
+        $('v-produto').value = '';
+      }
+      $('v-qtd').value = '1'; $('v-desc').value = '0'; $('v-total').value = '';
+      renderCarrinhoG();
+    };
     window.finalizarVendaG = async function () {
       const data = $('v-data').value, canal = $('v-canal').value, obs = $('v-obs').value.trim();
       const cliNome = $('v-cli-nome').value.trim(), cliTel = $('v-cli-tel').value.trim(), cliEmail = $('v-cli-email').value.trim();
@@ -187,6 +245,7 @@
       if (!canal) { mostrarErro('Selecione o canal de venda.'); return; }
       if (!carrinhoG.length) { mostrarErro('Adicione pelo menos um produto ao carrinho.'); return; }
       for (const item of carrinhoG) {
+        if (item.avulso) continue;   // venda avulsa não tem produto/estoque pra checar
         const p = produtos.find(x => String(x.id) === String(item.pid));
         if (!p || p.qtd < item.qtd) { mostrarErro('Estoque insuficiente para: ' + item.nome); return; }
       }
@@ -194,7 +253,9 @@
       const cartDesc = parseFloat(($('g-cart-desc') || {}).value) || 0, cartTipo = (($('g-cart-desc-tipo') || {}).value) || 'R$';
       const cartDescVal = cartTipo === '%' ? subtotalGeral * (cartDesc / 100) : cartDesc;
       const payload = { data, canal, obs, origem: 'gestao', desconto_venda: r2(cartDescVal),
-        itens: carrinhoG.map(i => ({ sku: i.pid, nome: i.nome, preco: i.preco, qtd: i.qtd, desconto: r2(i.desconto), label: i.descontoLabel })) };
+        itens: carrinhoG.map(i => i.avulso
+          ? { avulso: true, tipo_avulso: i.tipoAvulso, descricao_avulsa: i.descricaoAvulsa, observacao_avulsa: i.observacaoAvulsa, preco: i.preco, qtd: i.qtd, desconto: r2(i.desconto), label: i.descontoLabel, custo_unitario_manual: i.custoManual }
+          : { sku: i.pid, nome: i.nome, preco: i.preco, qtd: i.qtd, desconto: r2(i.desconto), label: i.descontoLabel }) };
       const sel = $('v-cli-sel').value;
       if (sel) payload.cliente_id = sel; else if (cliNome) payload.cliente = { nome: cliNome, tel: cliTel, email: cliEmail, salvar };
       const r = await agir(() => rpc('gestao_registrar_venda', { p: payload }));
@@ -204,6 +265,7 @@
       renderCarrinhoG();
       ['v-canal', 'v-obs', 'v-cli-nome', 'v-cli-tel', 'v-cli-email', 'v-cli-sel'].forEach(i => $(i).value = '');
       $('v-qtd').value = '1'; $('v-desc').value = '0'; $('v-total').value = ''; $('v-salvar-cli').checked = false;
+      $('v-avulso-toggle').checked = false; $('v-avulso-obs').value = ''; toggleAvulsoG();
       renderProdutosSel();
       const a = $('alert-venda'); a.style.display = 'block'; setTimeout(() => a.style.display = 'none', 3000);
     };
