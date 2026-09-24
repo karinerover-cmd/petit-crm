@@ -14,7 +14,9 @@
   const mesInput = m => String(m || '').slice(0, 7);
   const hojeISO = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
   const STATUS = { abaixo_equilibrio: ['Abaixo do equilíbrio', 'background:#FCE8E8;color:#A32D2D'], entre_equilibrio_e_meta: ['Entre o equilíbrio e a meta', 'background:#FFF4DC;color:#8A5A00'], acima_meta: ['Acima da meta', 'background:#E6F4EA;color:#2e7d32'] };
+  const CLASSE = { A: 'background:#E6F4EA;color:#2e7d32', B: 'background:#FFF4DC;color:#8A5A00', C: 'background:#EFE7E2;color:#7A6A60' };   // Fase 15
   let D = { ind: [], feiraMedia: [], feiras: [], custos: [], cfg: {}, despRec: [], metas: [], temMetas: false }, aba = 'painel', mesSel = '', feiraEdit = null, custoEdit = null, anoMetas = new Date().getFullYear();
+  let janelaAbc = '90d', mesPlan = new Date().toISOString().slice(0, 7);   // Fase 15
 
   async function ler(t, col, asc) {
     let q = sb().from(t).select('*'); if (col) q = q.order(col, { ascending: asc !== false });
@@ -26,7 +28,11 @@
     let metas = [], temMetas = true;
     try { metas = await ler('metas_faturamento', 'mes'); } catch (e) { temMetas = false; }   // complemento de metas ainda não rodado: a tela funciona sem ele
     let temNiveis = false; try { await ler('progresso_mensal'); temNiveis = true; } catch (e) { }   // Fase 14 (mínima/desafio) ainda não rodada
-    D = { ind, feiraMedia, feiras, custos, cfg: cfg[0] || {}, despRec: desp.filter(x => x.recorrente), metas, temMetas, temNiveis };
+    // Fase 15: curva ABC visual + Pareto, e planejamento de vendas por produto (a tela funciona sem, se ainda não rodou)
+    let abc = [], temABC = true; try { abc = await ler('curva_abc_detalhe', 'ordem_reposicao'); } catch (e) { temABC = false; }
+    let plano = [], produtosSel = [], temPlanejamento = true;
+    try { [plano, produtosSel] = await Promise.all([ler('progresso_planejamento_mensal', 'sku'), ler('produtos', 'nome')]); } catch (e) { temPlanejamento = false; }
+    D = { ind, feiraMedia, feiras, custos, cfg: cfg[0] || {}, despRec: desp.filter(x => x.recorrente), metas, temMetas, temNiveis, abc, temABC, plano, produtosSel, temPlanejamento };   // produtosSel inclui os ocultos: planejar uma nova fabricação de um campeão esgotado é o uso mais útil
     if (!mesSel || !D.ind.some(i => i.mes === mesSel)) mesSel = D.ind.length ? D.ind[0].mes : '';
   }
   async function rpc(nome, args) { const { data, error } = await sb().rpc(nome, args); if (error) throw new Error(error.message); return data; }
@@ -176,7 +182,107 @@
   }
 
   const recarregar = async msg => { await carregar(); if (msg) aviso(msg, true); desenhar(); };
+  // ---------- Curva ABC + Pareto (Fase 15) ----------
+  function tabABC() {
+    if (!D.temABC) return '<div class="alert">A Curva ABC visual precisa do SQL "20261001100000_fase15_curva_abc_planejamento.sql" rodado no Supabase.</div>';
+    const lista = D.abc.filter(r => r.janela === janelaAbc);
+    let h = `<div class="table-toolbar"><button class="btn btn-sm ${janelaAbc === '90d' ? 'btn-primary' : 'btn-outline'}" onclick="PetitIN.janela('90d')">Últimos 90 dias</button>
+      <button class="btn btn-sm ${janelaAbc === '12m' ? 'btn-primary' : 'btn-outline'}" onclick="PetitIN.janela('12m')">Últimos 12 meses</button>
+      <button class="btn btn-outline btn-sm" style="margin-left:auto" title="Baixa um CSV desta janela (ordem de faturamento), para colar no chat e planejar" onclick="PetitIN.exportarAbc()">⬇ Exportar CSV</button></div>`;
+    if (!lista.length) return h + '<div class="empty-state">Sem venda de produto de catálogo nessa janela ainda.</div>';
+    const porFaturamento = lista.slice().sort((a, b) => a.posicao - b.posicao);   // Pareto sempre em ordem de faturamento, mesmo a tabela abaixo estando por prioridade de reposição
+    h += `<div class="table-card" style="padding:16px;margin-bottom:12px"><b>Pareto — faturamento por produto</b><div class="td-muted" style="margin-bottom:8px">Barras em ordem decrescente de faturamento; a linha é o % acumulado, com marca em 80% e 95% (os mesmos cortes da classe).</div>
+      <div>${paretoSvg(porFaturamento)}</div></div>`;
+    h += `<div class="table-card"><table><thead><tr><th>Produto</th><th>Classe</th><th>Faturamento</th><th>% do total</th><th>% acumulado</th><th>Estoque</th><th></th></tr></thead><tbody>${lista.map(r => `<tr>
+      <td>${esc(r.nome)} <span class="chip">${esc(r.sku)}</span>${r.oculto ? ' <span class="td-muted">(oculto)</span>' : ''}<div class="td-muted">${esc(r.categoria || '')}</div></td>
+      <td><span class="badge" style="${CLASSE[r.classe]}">${r.classe}</span></td>
+      <td>${brl(r.faturamento)}</td><td>${pct(r.participacao)}</td><td>${pct(r.participacao_acumulada)}</td>
+      <td>${r.estoque_atual}${r.status_estoque === 'baixo' ? ' <span class="badge" style="background:#FCE8E8;color:#A32D2D">baixo</span>' : ''}</td>
+      <td></td></tr>`).join('')}</tbody></table></div>
+      <div class="td-muted" style="margin-top:8px">Ordenado para saber o que repor primeiro: classe A antes de B e C; dentro da mesma classe, estoque baixo primeiro.</div>`;
+    return h;
+  }
+  // Pareto que cabe na largura da tela (com 80+ produtos não pode depender de rolagem: as classes B e C ficavam escondidas).
+  // Faixas coloridas por classe, com rótulo, + legenda. Lista já vem em ordem de faturamento (posição), então cada classe é um bloco contínuo.
+  function paretoSvg(lista) {
+    const W = 1000, H = 270, ml = 78, mr = 66, base = H - 34, topo = 46, escala = base - topo, n = lista.length, passo = (W - ml - mr) / n, larg = Math.max(2, passo * 0.72);
+    const COR = { A: '#2e7d32', B: '#B8860B', C: '#B0A69C' }, FAIXA = { A: '#EAF5EC', B: '#FFF7E3', C: '#F3EEEA' };
+    const maxFat = Math.max(...lista.map(r => Number(r.faturamento)), 1), x = i => ml + i * passo, cx = i => x(i) + passo / 2;
+    const blocos = []; lista.forEach((r, i) => { const u = blocos[blocos.length - 1]; if (u && u.classe === r.classe) u.fim = i; else blocos.push({ classe: r.classe, ini: i, fim: i }); });
+    const faixas = blocos.map(b => { const x0 = x(b.ini), x1 = x(b.fim + 1), q = b.fim - b.ini + 1;
+      return `<rect x="${x0}" y="${topo - 24}" width="${x1 - x0}" height="${base - topo + 24}" fill="${FAIXA[b.classe]}"/>
+        <text x="${(x0 + x1) / 2}" y="${topo - 8}" text-anchor="middle" class="pt-faixa" font-weight="600" fill="${COR[b.classe]}">${b.classe}<tspan class="pt-qtd"> · ${q} produto${q > 1 ? 's' : ''}</tspan></text>`; }).join('');
+    const barras = lista.map((r, i) => { const alt = Number(r.faturamento) / maxFat * escala;
+      return `<rect x="${x(i) + (passo - larg) / 2}" y="${base - alt}" width="${larg}" height="${alt}" fill="${COR[r.classe]}"><title>${esc(r.nome)} [${esc(r.sku)}] (classe ${r.classe}): ${brl(r.faturamento)} · acumulado ${pct(r.participacao_acumulada)}</title></rect>`; }).join('');
+    const pontos = lista.map((r, i) => `${cx(i)},${base - Number(r.participacao_acumulada) * escala}`).join(' ');
+    const corte = p => `<line x1="${ml}" y1="${base - p * escala}" x2="${W - mr}" y2="${base - p * escala}" stroke="#777" stroke-dasharray="4,3"/>
+      <text x="${W - mr + 4}" y="${base - p * escala + 4}" class="pt-eixo" fill="#555">${Math.round(p * 100)}%</text>`;
+    const eixo = [0, 0.5, 1].map(p => `<text x="${ml - 6}" y="${base - p * escala + 4}" text-anchor="end" class="pt-eixo" fill="#999">${Math.round(p * 100)}%</text>`).join('');
+    const leg = (c, t, k) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:16px"><span style="width:11px;height:11px;border-radius:3px;background:${c}"></span>${t}</span>`;
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;max-width:${W}px">
+        <style>.pt-faixa{font-size:12px}.pt-eixo{font-size:11px}@media (max-width:640px){.pt-faixa{font-size:34px}.pt-eixo{font-size:24px}.pt-qtd{display:none}}</style>
+        ${faixas}${eixo}${corte(0.80)}${corte(0.95)}${barras}
+        <polyline points="${pontos}" fill="none" stroke="#993556" stroke-width="2"/>
+        <line x1="${ml}" y1="${base}" x2="${W - mr}" y2="${base}" stroke="#bbb"/>
+      </svg>
+      <div style="font-size:12px;margin-top:6px;color:#555">${leg(COR.A, 'A — juntos somam até 80% do faturamento')}${leg(COR.B, 'B — de 80% a 95%')}${leg(COR.C, 'C — o resto (95% a 100%)')}${leg('#993556', '% acumulado (linha)')}</div>
+      <div class="td-muted" style="font-size:12px">Passe o mouse (ou toque) numa barra para ver o produto. Os nomes estão na tabela abaixo.</div>`;
+  }
+
+  // ---------- Planejamento de vendas por produto (Fase 15) ----------
+  function tabPlanejamento() {
+    if (!D.temPlanejamento) return '<div class="alert">O planejamento de vendas precisa do SQL "20261001100000_fase15_curva_abc_planejamento.sql" rodado no Supabase.</div>';
+    const itens = D.plano.filter(r => d10(r.mes) === mesPlan + '-01').sort((a, b) => a.nome.localeCompare(b.nome));
+    let h = `<p class="td-muted">Planejamento livre de quantidades por produto — não precisa bater com a meta de faturamento, é só um guia de estratégia. Todos os produtos do cadastro aparecem, inclusive os ocultos/esgotados (dá para planejar uma nova fabricação).</p>
+      <div class="table-toolbar"><input type="month" value="${mesPlan}" onchange="PetitIN.mesPlan(this.value)"></div>
+      <div class="table-card" style="padding:16px;margin-bottom:12px"><b>+ Adicionar produto ao planejamento</b>
+        <div class="grid2f" style="margin-top:8px">
+          <div class="field"><label>Produto</label><select id="pl-sku"><option value="">Selecione...</option>${D.produtosSel.map(p => `<option value="${p.sku}">${esc(p.nome)} — ${esc(p.sku)}${p.oculto ? ' (oculto/esgotado)' : ''}</option>`).join('')}</select></div>
+          <div class="field"><label>Quantidade planejada</label><input id="pl-qtd" placeholder="ex.: 20"></div>
+        </div>
+        <div class="field"><label>Observação (opcional)</label><input id="pl-obs" placeholder="ex.: lançar promoção na 2ª quinzena"></div>
+        <button class="btn btn-primary btn-sm" onclick="PetitIN.planoAdicionar()">Adicionar</button></div>`;
+    if (!itens.length) return h + '<div class="empty-state">Nenhum produto planejado para ' + mesTxt(mesPlan + '-01') + ' ainda.</div>';
+    const totPlan = itens.reduce((a, r) => a + r.quantidade_planejada, 0), totVend = itens.reduce((a, r) => a + r.quantidade_vendida, 0);
+    h += `<div class="table-card"><table><thead><tr><th>Produto</th><th>Planejado</th><th>Vendido</th><th>%</th><th>Diferença</th><th></th><th></th></tr></thead><tbody>${itens.map(r => {
+      const p = Math.min(1, Number(r.pct_planejado));
+      return `<tr><td>${esc(r.nome)} <span class="chip">${esc(r.sku)}</span>${r.observacao ? `<div class="td-muted">${esc(r.observacao)}</div>` : ''}</td>
+      <td>${r.quantidade_planejada}</td><td>${r.quantidade_vendida}</td><td>${pct(r.pct_planejado)}</td>
+      <td style="color:${r.diferenca > 0 ? 'inherit' : '#2e7d32'}">${r.diferenca > 0 ? r.diferenca + ' faltam' : r.mes_fechado ? 'bateu ✓' : 'já bateu ✓'}</td>
+      <td style="min-width:100px"><div style="height:8px;border-radius:4px;background:#EFE7E2"><div style="height:100%;border-radius:4px;background:${p >= 1 ? '#2e7d32' : 'var(--pink)'};width:${(p * 100).toFixed(0)}%"></div></div></td>
+      <td><button class="btn-icon" title="Excluir" onclick="PetitIN.planoExcluir('${r.id}')">🗑</button></td></tr>`;
+    }).join('')}</tbody></table>
+      <div style="padding:10px 16px;font-weight:600">Total: ${totPlan} planejadas · ${totVend} vendidas (${pct(totVend / (totPlan || 1))})</div></div>`;
+    return h;
+  }
+
   window.PetitIN = {
+    janela(j) { janelaAbc = j; desenhar(); },
+    exportarAbc() {   // CSV da janela na tela, em ordem de faturamento; vírgula e ponto decimal, como os outros CSVs do app
+      const lista = D.abc.filter(r => r.janela === janelaAbc).sort((a, b) => a.posicao - b.posicao);
+      if (!lista.length) return aviso('Não há dados nessa janela para exportar.', false);
+      const cel = v => { const t = String(v == null ? '' : v); return /[",;\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+      const p100 = v => v == null ? '' : (Number(v) * 100).toFixed(2);
+      const linhas = [['janela', 'posicao_faturamento', 'sku', 'produto', 'categoria', 'colecao', 'classe', 'faturamento', 'unidades_vendidas', 'participacao_pct', 'acumulado_pct',
+        'estoque_atual', 'status_estoque', 'oculto', 'ordem_reposicao']].concat(lista.map(r => [r.janela, r.posicao, r.sku, r.produto || r.nome, r.categoria, r.colecao, r.classe,
+        Number(r.faturamento).toFixed(2), r.unidades, p100(r.participacao), p100(r.participacao_acumulada), r.estoque_atual, r.status_estoque, r.oculto ? 'sim' : 'nao', r.ordem_reposicao]));
+      csvDown(linhas.map(l => l.map(cel).join(',')).join('\n'), 'curva_abc_' + janelaAbc + '_' + hojeISO() + '.csv');
+      aviso('CSV da curva ABC (' + (janelaAbc === '90d' ? '90 dias' : '12 meses') + ', ' + lista.length + ' produtos) baixado.', true);
+    },
+    mesPlan(m) { if (m) { mesPlan = m; desenhar(); } },
+    async planoAdicionar() {
+      const sku = $('pl-sku').value; if (!sku) return aviso('Selecione um produto.', false);
+      const qtd = numero($('pl-qtd').value); if (qtd == null || qtd <= 0) return aviso('Informe uma quantidade maior que zero.', false);
+      try {
+        await rpc('gestao_salvar_planejamento_mensal', { p: { mes: mesPlan + '-01', itens: [{ sku, quantidade: qtd, observacao: $('pl-obs').value }] } });
+        $('pl-sku').value = ''; $('pl-qtd').value = ''; $('pl-obs').value = '';
+        await recarregar('Adicionado ao planejamento.');
+      } catch (e) { aviso(e.message, false); }
+    },
+    async planoExcluir(id) {
+      if (!confirm('Excluir este produto do planejamento do mês?')) return;
+      try { await rpc('gestao_excluir_item_planejamento', { p_id: id }); await recarregar('Removido do planejamento.'); } catch (e) { aviso(e.message, false); }
+    },
     aba(a) { aba = a; feiraEdit = null; custoEdit = null; desenhar(); },
     mes(m) { mesSel = m; aba = 'painel'; desenhar(); },
     cancelar() { feiraEdit = null; custoEdit = null; desenhar(); },
@@ -253,7 +359,8 @@
   function desenhar() {
     const raiz = $('in-conteudo'); if (!raiz) return;
     document.querySelectorAll('#in-abas button').forEach(b => { b.className = 'btn btn-sm ' + (b.dataset.a === aba ? 'btn-primary' : 'btn-outline'); });
-    raiz.innerHTML = aba === 'painel' ? tabPainel() : aba === 'feiras' ? tabFeiras() : aba === 'custos' ? tabCustos() : aba === 'metas' ? tabMetas() : tabConfig();
+    raiz.innerHTML = aba === 'painel' ? tabPainel() : aba === 'feiras' ? tabFeiras() : aba === 'custos' ? tabCustos() : aba === 'metas' ? tabMetas()
+      : aba === 'abc' ? tabABC() : aba === 'planejamento' ? tabPlanejamento() : tabConfig();
     if (aba === 'painel' && window.PetitProgresso) window.PetitProgresso.mes('in-progresso', mesSel);
   }
   function montar() {
@@ -264,7 +371,9 @@
     const s = document.createElement('div'); s.id = 'sec-indicadores'; s.className = 'section';
     s.innerHTML = `<div class="page-header"><div><div class="page-title">🎯 Indicadores</div><div class="page-sub">Ponto de equilíbrio e meta de faturamento saudável, com a margem real das vendas</div></div></div>
       <div class="page-content"><div id="in-abas" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px"><button data-a="painel" onclick="PetitIN.aba('painel')">📊 Painel</button><button data-a="metas" onclick="PetitIN.aba('metas')">🎯 Metas</button>
-      <button data-a="feiras" onclick="PetitIN.aba('feiras')">🎪 Feiras</button><button data-a="custos" onclick="PetitIN.aba('custos')">🧾 Custos fixos</button><button data-a="config" onclick="PetitIN.aba('config')">⚙️ Configuração</button></div><div id="in-conteudo"></div></div>`;
+      <button data-a="feiras" onclick="PetitIN.aba('feiras')">🎪 Feiras</button><button data-a="custos" onclick="PetitIN.aba('custos')">🧾 Custos fixos</button>
+      <button data-a="abc" onclick="PetitIN.aba('abc')">📊 Curva ABC</button><button data-a="planejamento" onclick="PetitIN.aba('planejamento')">📅 Planejamento</button>
+      <button data-a="config" onclick="PetitIN.aba('config')">⚙️ Configuração</button></div><div id="in-conteudo"></div></div>`;
     $('main').appendChild(s);
     const g0 = window.goTo;
     window.goTo = function (sec) { g0(sec); if (sec === 'indicadores') { $('nav-indicadores').classList.add('active'); carregar().then(desenhar).catch(e => { $('in-conteudo').innerHTML = '<div class="alert">Não foi possível carregar: ' + esc(e.message) + '<br>Se for a primeira vez, o SQL da Fase 10 precisa ter sido rodado no Supabase.</div>'; }); } };
