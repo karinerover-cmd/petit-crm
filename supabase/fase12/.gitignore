@@ -1,2 +1,6 @@
 # Valores do negócio (livro-caixa real da planilha): NUNCA versionar (repositório público)
 02_importacao_planilha_2026.sql
+# Extratos bancários reais convertidos em SQL (conciliação mensal): NUNCA versionar
+conciliacoes/
+# Regras de conciliação com nomes de pessoas: NUNCA versionar
+02b_regras_locais_extrato.sql

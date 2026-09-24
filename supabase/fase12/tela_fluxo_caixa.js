@@ -16,18 +16,24 @@
   const ORIGEM = { venda: 'venda', divida_pagamento: 'dívida', despesa_operacional: 'custo fixo', investimento: 'investimento' };
   let D = { contas: [], extrato: [], resumo: [], projetado: [], categorias: [], custos: [] };
   let aba = 'livro', contaSel = null, mesSel = hojeISO().slice(0, 7), movEdit = null, contaEdit = null, selecionados = new Set();
+  let conc = {};                                           // escolhas da Karine na conciliação, por linha do extrato
 
   async function ler(t, col, asc) {
     let q = sb().from(t).select('*'); if (col) q = q.order(col, { ascending: asc !== false });
     const { data, error } = await q.range(0, 9999); if (error) throw new Error(t + ': ' + error.message); return data || [];
   }
+  const lerOpcional = (t, col, asc) => ler(t, col, asc).catch(() => null);   // Fase 12b ainda não rodada: a tela abre sem a aba de conciliação
   async function carregar() {
-    const [contas, extrato, resumo, projetado, categorias, custos] = await Promise.all([ler('contas_bancarias', 'data_abertura'),
+    const [contas, extrato, resumo, projetado, categorias, custos, proposta, importacoes, saldoDiario] = await Promise.all([ler('contas_bancarias', 'data_abertura'),
       ler('fluxo_caixa_extrato', 'data_caixa'), ler('fluxo_caixa_resumo_mensal', 'mes'), ler('saldo_caixa_projetado', 'mes'),
-      ler('fluxo_caixa_categorias', 'usos', false), ler('custos_fixos', 'nome')]);
+      ler('fluxo_caixa_categorias', 'usos', false), ler('custos_fixos', 'nome'),
+      lerOpcional('extrato_conciliacao_proposta', 'data'), lerOpcional('extrato_importacoes_resumo', 'importado_em', false), lerOpcional('extrato_saldo_diario', 'data')]);
     extrato.sort((a, b) => (a.data_caixa < b.data_caixa ? -1 : a.data_caixa > b.data_caixa ? 1 : Number(a.seq) - Number(b.seq)));
-    D = { contas, extrato, resumo, projetado, categorias, custos };
+    D = { contas, extrato, resumo, projetado, categorias, custos, proposta, importacoes, saldoDiario };
     if (!contaSel || !contas.find(c => c.id === contaSel)) contaSel = (contas.find(c => c.principal) || contas[0] || {}).id || null;
+    const vivas = new Set((proposta || []).map(p => p.linha_id));
+    for (const id of Object.keys(conc)) if (!vivas.has(id)) delete conc[id];
+    for (const p of proposta || []) if (!conc[p.linha_id]) conc[p.linha_id] = { acao: p.acao_sugerida, categoria: p.categoria_sugerida || '', marcado: p.acao_sugerida !== 'novo' || !!p.categoria_sugerida };
   }
   async function rpc(nome, args) { const { data, error } = await sb().rpc(nome, args); if (error) throw new Error(error.message); return data; }
   function aviso(t, ok) { const d = document.createElement('div'); d.textContent = t; d.style.cssText = 'position:fixed;bottom:44px;right:20px;max-width:440px;background:' + (ok === false ? '#A32D2D' : '#2e7d32') + ';color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;z-index:99998;box-shadow:0 4px 16px rgba(0,0,0,.2)'; document.body.appendChild(d); setTimeout(() => d.remove(), 6000); }
@@ -166,6 +172,47 @@
     return h;
   }
 
+  // ---------- conciliação com o extrato do banco (Fase 12b) ----------
+  const ACAO = { confirmar: 'Confirmar lançamento', transferencia: 'Transferência entre contas', novo: 'Lançar como novo', ignorar: 'Ignorar' };
+  function tabConciliacao() {
+    if (!D.proposta) return quebraAviso + 'A conciliação por extrato ainda não está ativa: falta rodar o SQL da Fase 12b no Supabase.</div>';
+    let h = `${quebraAviso}<b>Como funciona:</b> me passe os extratos do mês em PDF (C6 e Nubank PJ). Eu confiro o saldo com o do banco e te entrego um SQL;
+      rode no Supabase e as linhas aparecem aqui com uma sugestão. Revise, ajuste o que precisar e aprove — o valor e a data que ficam são sempre os do banco.</div>`;
+    const imps = (D.importacoes || []).filter(i => Math.abs(Number(i.diferenca_abertura)) >= 0.01 || i.linhas_pendentes > 0);
+    if (imps.length) h += `<div class="table-card" style="margin-bottom:12px"><table><thead><tr><th>Extrato</th><th>Período</th><th>Saldo do banco no início</th><th>Sistema no início</th><th>Diferença de abertura</th><th>Pendentes</th><th></th></tr></thead><tbody>${imps.map(i => `<tr>
+      <td>${esc(i.conta_nome)}<div class="td-muted">${esc(i.arquivo || '')}</div></td><td>${dataBR(i.periodo_inicio)} a ${dataBR(i.periodo_fim)}</td>
+      <td>${brl(i.saldo_abertura)}</td><td>${brl(i.saldo_sistema_abertura)}</td>
+      <td>${Math.abs(Number(i.diferenca_abertura)) >= 0.01 ? `<b style="color:#A32D2D">${brl(i.diferenca_abertura)}</b>` : '<span style="color:#2e7d32">bate ✓</span>'}</td>
+      <td>${i.linhas_pendentes}</td>
+      <td>${Math.abs(Number(i.diferenca_abertura)) >= 0.01 ? `<button class="btn btn-outline btn-sm" title="Lança um ajuste no 1º dia do período para o saldo do sistema começar igual ao do banco" onclick="PetitFC.ajusteAbertura('${i.id}')">Lançar ajuste de abertura</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
+    const prop = D.proposta;
+    if (!prop.length) h += '<div class="empty-state">Nenhuma linha de extrato esperando conciliação. 🎉</div>';
+    else {
+      const marcadas = prop.filter(p => conc[p.linha_id] && conc[p.linha_id].marcado).length;
+      h += `<div class="table-toolbar"><button class="btn btn-primary btn-sm" onclick="PetitFC.aprovarConciliacao()">✓ Aprovar selecionadas (${marcadas} de ${prop.length})</button></div>
+        <div class="table-card"><table><thead><tr><th><input type="checkbox" onchange="PetitFC.marcarConc(null, this.checked)" ${marcadas === prop.length ? 'checked' : ''}></th><th>Data</th><th>Conta</th><th>No extrato</th><th>Valor</th><th>O que fazer</th><th>Detalhe</th></tr></thead><tbody>${prop.map(p => {
+        const e = conc[p.linha_id] || {}, acoes = ['novo', 'ignorar'].concat(p.movimento_id ? ['confirmar'] : [], p.par_linha_id ? ['transferencia'] : []);
+        let det = '';
+        if (e.acao === 'confirmar') det = `↔ ${esc(p.movimento_descricao)}${p.movimento_origem === 'venda' ? '' : ` <span class="td-muted">(${dataBR(p.movimento_data)})</span>`}`;   // descrição da venda já traz a data
+        else if (e.acao === 'transferencia') det = `↔ a outra ponta no <b>${esc(p.par_conta_nome)}</b>`;
+        else if (e.acao === 'novo') det = `<input list="fc-cats-conc" value="${esc(e.categoria)}" placeholder="categoria…" style="min-width:170px" onchange="PetitFC.categoriaConc('${p.linha_id}', this.value)">${p.custo_fixo_nome ? ` <span class="badge badge-blue" title="Quita o custo fixo do mês">custo fixo: ${esc(p.custo_fixo_nome)}</span>` : ''}`;
+        return `<tr${e.marcado ? '' : ' style="opacity:.55"'}><td><input type="checkbox" ${e.marcado ? 'checked' : ''} onchange="PetitFC.marcarConc('${p.linha_id}', this.checked)"></td>
+          <td>${dataBR(p.data)}</td><td>${esc(p.conta_nome)}</td><td>${esc(p.descricao)}</td>
+          <td style="color:${Number(p.valor) < 0 ? '#A32D2D' : '#2e7d32'};white-space:nowrap">${brl(p.valor)}</td>
+          <td><select onchange="PetitFC.acaoConc('${p.linha_id}', this.value)">${acoes.map(a => `<option value="${a}"${a === e.acao ? ' selected' : ''}>${ACAO[a]}</option>`).join('')}</select></td><td>${det}</td></tr>`;
+      }).join('')}</tbody></table><datalist id="fc-cats-conc">${D.categorias.map(c => `<option value="${esc(c.categoria)}">`).join('')}</datalist></div>`;
+    }
+    const dias = D.saldoDiario || [];
+    if (dias.length) {
+      const errados = dias.filter(x => Math.abs(Number(x.diferenca)) >= 0.01).length;
+      h += `<div style="font-weight:600;margin:18px 0 8px">Sistema x banco, dia a dia ${errados ? `<span class="badge badge-pink">${errados} dia(s) diferente(s)</span>` : '<span class="badge badge-blue">tudo batendo ✓</span>'}</div>
+        <div class="table-card"><table><thead><tr><th>Dia</th><th>Conta</th><th>Saldo do banco</th><th>Saldo do sistema</th><th>Diferença</th></tr></thead><tbody>${dias.slice().reverse().map(x => `<tr>
+        <td>${dataBR(x.data)}</td><td>${esc(x.conta_nome)}</td><td>${brl(x.saldo_banco)}</td><td>${brl(x.saldo_sistema)}</td>
+        <td>${Math.abs(Number(x.diferenca)) >= 0.01 ? `<b style="color:#A32D2D">${brl(x.diferenca)}</b>${x.linhas_pendentes ? ` <span class="td-muted">(${x.linhas_pendentes} pendente(s))</span>` : ''}` : '<span style="color:#2e7d32">✓</span>'}</td></tr>`).join('')}</tbody></table></div>`;
+    }
+    return h;
+  }
+
   window.PetitFC = {
     aba(a) { aba = a; movEdit = null; contaEdit = null; desenhar(); },
     conta(id) { contaSel = id; desenhar(); },
@@ -199,6 +246,24 @@
       if (!confirm('Lançar "' + cf.nome + '" (' + brl(cf.valor_mensal) + ') como saída hoje na conta principal?')) return;
       try { await rpc('gestao_lancar_custo_fixo', { p: { custo_fixo_id: id, mes: hojeISO().slice(0, 7) + '-01' } }); await carregar(); aviso('Custo fixo lançado.', true); desenhar(); } catch (e) { aviso(e.message, false); }
     },
+    marcarConc(id, on) { if (id) conc[id].marcado = on; else for (const p of D.proposta || []) conc[p.linha_id].marcado = on; desenhar(); },
+    acaoConc(id, a) { conc[id].acao = a; if (a !== 'novo') conc[id].marcado = true; desenhar(); },
+    categoriaConc(id, v) { conc[id].categoria = v.trim(); if (conc[id].categoria) conc[id].marcado = true; desenhar(); },
+    async ajusteAbertura(id) {
+      const i = (D.importacoes || []).find(x => x.id === id); if (!i) return;
+      if (!confirm(`Lançar um ajuste de ${brl(i.diferenca_abertura)} em ${dataBR(i.periodo_inicio)} na ${i.conta_nome}, para o saldo do sistema começar igual ao do banco (${brl(i.saldo_abertura)})?`)) return;
+      try { await rpc('gestao_lancar_ajuste_abertura', { p_importacao_id: id }); await carregar(); aviso('Ajuste de abertura lançado.', true); desenhar(); } catch (e) { aviso(e.message, false); }
+    },
+    async aprovarConciliacao() {
+      const itens = (D.proposta || []).filter(p => conc[p.linha_id] && conc[p.linha_id].marcado).map(p => {
+        const e = conc[p.linha_id];
+        return { linha_id: p.linha_id, acao: e.acao, movimento_id: p.movimento_id, par_linha_id: p.par_linha_id, categoria: e.categoria, custo_fixo_id: e.acao === 'novo' ? p.custo_fixo_id : null };
+      });
+      if (!itens.length) return aviso('Marque pelo menos uma linha.', false);
+      const semCat = itens.find(i => i.acao === 'novo' && !i.categoria);
+      if (semCat) return aviso('Escolha a categoria de todas as linhas marcadas como "Lançar como novo".', false);
+      try { const n = await rpc('gestao_aplicar_conciliacao', { p: { itens } }); await carregar(); aviso(n + ' linha(s) conciliada(s).', true); desenhar(); } catch (e) { aviso(e.message, false); }
+    },
     novaConta() { contaEdit = { data_abertura: hojeISO() }; desenhar(); },
     editarConta(id) { contaEdit = Object.assign({}, conta(id)); desenhar(); },
     async salvarConta() {
@@ -214,8 +279,10 @@
     document.querySelectorAll('#fc-abas button').forEach(b => {
       b.className = 'btn btn-sm ' + (b.dataset.a === aba ? 'btn-primary' : 'btn-outline');
       if (b.dataset.a === 'confirmar') b.textContent = '⏳ A confirmar' + (n ? ' (' + n + ')' : '');
+      if (b.dataset.a === 'conciliacao') { const k = (D.proposta || []).length; b.textContent = '🧾 Conciliação' + (k ? ' (' + k + ')' : ''); }
     });
-    raiz.innerHTML = aba === 'livro' ? tabLivro() : aba === 'confirmar' ? tabConfirmar() : aba === 'projetado' ? tabProjetado() : tabContas();
+    raiz.innerHTML = aba === 'livro' ? tabLivro() : aba === 'confirmar' ? tabConfirmar() : aba === 'projetado' ? tabProjetado()
+      : aba === 'conciliacao' ? tabConciliacao() : tabContas();
   }
   function montar() {
     if ($('sec-caixa')) return;
@@ -226,7 +293,7 @@
     s.innerHTML = `<div class="page-header"><div><div class="page-title">💰 Fluxo de caixa</div><div class="page-sub">Livro-caixa por conta — cada conta com o seu próprio saldo</div></div></div>
       <div class="page-content"><div id="fc-abas" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px"><button data-a="livro" onclick="PetitFC.aba('livro')">📒 Livro-caixa</button>
       <button data-a="confirmar" onclick="PetitFC.aba('confirmar')">⏳ A confirmar</button><button data-a="projetado" onclick="PetitFC.aba('projetado')">📈 Saldo projetado</button>
-      <button data-a="contas" onclick="PetitFC.aba('contas')">🏦 Contas</button></div><div id="fc-conteudo"></div></div>`;
+      <button data-a="conciliacao" onclick="PetitFC.aba('conciliacao')">🧾 Conciliação</button><button data-a="contas" onclick="PetitFC.aba('contas')">🏦 Contas</button></div><div id="fc-conteudo"></div></div>`;
     $('main').appendChild(s);
     const g0 = window.goTo;
     window.goTo = function (sec) { g0(sec); if (sec === 'caixa') { $('nav-caixa').classList.add('active'); carregar().then(desenhar).catch(e => { $('fc-conteudo').innerHTML = quebraAviso + 'Não foi possível carregar: ' + esc(e.message) + '<br>Se for a primeira vez, o SQL da Fase 12 precisa ter sido rodado no Supabase.</div>'; }); } };
