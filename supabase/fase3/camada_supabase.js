@@ -178,6 +178,34 @@
       if (r.ok) closeModal('modal-fab');
     };
 
+    // — Data da venda —
+    // O app original preenchia a data com new Date().toISOString() (hora UTC) uma única vez, quando a página abre. Depois das 21h
+    // (Brasília) a data UTC já é "amanhã": a venda ficava no futuro e não entrava na Curva ABC nem no progresso da meta. E, com a
+    // página aberta de um dia para o outro, a data ficava a de ontem. Agora: data local, renovada ao abrir "Registrar venda" com o
+    // carrinho vazio (se ela não escolheu outra data à mão), e um aviso quando a data não é hoje.
+    const hojeLocal = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+    let dataEscolhida = false;                               // ela mexeu na data: não sobrescrever
+    function avisoDataVenda() {
+      const el = $('v-data'); if (!el) return;
+      let av = $('v-data-aviso'); if (!av) { av = document.createElement('div'); av.id = 'v-data-aviso'; av.style.cssText = 'font-size:12px;margin-top:4px'; el.parentNode.appendChild(av); }
+      const v = el.value, hoje = hojeLocal(), br = String(v).split('-').reverse().join('/');
+      if (!v || v === hoje) { av.textContent = ''; }
+      else if (v > hoje) { av.style.color = '#A32D2D'; av.textContent = '⚠️ Data no futuro (' + br + '): a venda só entra na Curva ABC e no progresso da meta a partir desse dia.'; }
+      else { av.style.color = '#8A5A00'; av.textContent = 'Esta venda será registrada em ' + br + ' (não é hoje).'; }
+    }
+    function preencherDataVenda(forcar) {
+      const el = $('v-data'); if (!el) return;
+      if (forcar || !dataEscolhida) el.value = hojeLocal();
+      avisoDataVenda();
+    }
+    if ($('v-data') && !window.__dataVendaInstalada) {       // carregar() roda a cada login: instala uma vez só por página
+      window.__dataVendaInstalada = true;
+      ['input', 'change'].forEach(ev => $('v-data').addEventListener(ev, () => { dataEscolhida = $('v-data').value !== hojeLocal(); avisoDataVenda(); }));
+      preencherDataVenda(true);
+      const goToOrig = window.goTo;
+      window.goTo = function (sec) { goToOrig(sec); if (sec === 'venda' && (typeof carrinhoG === 'undefined' || !carrinhoG.length)) preencherDataVenda(false); };
+    }
+
     // — Vendas —
     // Fase 16: venda avulsa (refil/encomenda/personalizado sem produto cadastrado) — mesmo carrinho, item marcado com avulso:true.
     window.toggleAvulsoG = function () {

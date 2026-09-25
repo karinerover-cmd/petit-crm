@@ -16,7 +16,7 @@
   const STATUS = { abaixo_equilibrio: ['Abaixo do equilíbrio', 'background:#FCE8E8;color:#A32D2D'], entre_equilibrio_e_meta: ['Entre o equilíbrio e a meta', 'background:#FFF4DC;color:#8A5A00'], acima_meta: ['Acima da meta', 'background:#E6F4EA;color:#2e7d32'] };
   const CLASSE = { A: 'background:#E6F4EA;color:#2e7d32', B: 'background:#FFF4DC;color:#8A5A00', C: 'background:#EFE7E2;color:#7A6A60' };   // Fase 15
   let D = { ind: [], feiraMedia: [], feiras: [], custos: [], cfg: {}, despRec: [], metas: [], temMetas: false }, aba = 'painel', mesSel = '', feiraEdit = null, custoEdit = null, anoMetas = new Date().getFullYear();
-  let janelaAbc = '90d', mesPlan = new Date().toISOString().slice(0, 7);   // Fase 15
+  let janelaAbc = '90d', mesPlan = hojeISO().slice(0, 7);   // Fase 15 (data local, não UTC)
 
   async function ler(t, col, asc) {
     let q = sb().from(t).select('*'); if (col) q = q.order(col, { ascending: asc !== false });
@@ -32,7 +32,7 @@
     let abc = [], temABC = true; try { abc = await ler('curva_abc_detalhe', 'ordem_reposicao'); } catch (e) { temABC = false; }
     let plano = [], produtosSel = [], temPlanejamento = true;
     try { [plano, produtosSel] = await Promise.all([ler('progresso_planejamento_mensal', 'sku'), ler('produtos', 'nome')]); } catch (e) { temPlanejamento = false; }
-    D = { ind, feiraMedia, feiras, custos, cfg: cfg[0] || {}, despRec: desp.filter(x => x.recorrente), metas, temMetas, temNiveis, abc, temABC, plano, produtosSel, temPlanejamento };   // produtosSel inclui os ocultos: planejar uma nova fabricação de um campeão esgotado é o uso mais útil
+    D = { ind, feiraMedia, feiras, custos, cfg: cfg[0] || {}, despRec: desp.filter(x => x.recorrente), metas, temMetas, temNiveis, abc, temABC, plano, produtosSel, temPlanejamento, carregadoEm: new Date() };   // produtosSel inclui os ocultos: planejar uma nova fabricação de um campeão esgotado é o uso mais útil
     if (!mesSel || !D.ind.some(i => i.mes === mesSel)) mesSel = D.ind.length ? D.ind[0].mes : '';
   }
   async function rpc(nome, args) { const { data, error } = await sb().rpc(nome, args); if (error) throw new Error(error.message); return data; }
@@ -188,7 +188,9 @@
     const lista = D.abc.filter(r => r.janela === janelaAbc);
     let h = `<div class="table-toolbar"><button class="btn btn-sm ${janelaAbc === '90d' ? 'btn-primary' : 'btn-outline'}" onclick="PetitIN.janela('90d')">Últimos 90 dias</button>
       <button class="btn btn-sm ${janelaAbc === '12m' ? 'btn-primary' : 'btn-outline'}" onclick="PetitIN.janela('12m')">Últimos 12 meses</button>
-      <button class="btn btn-outline btn-sm" style="margin-left:auto" title="Baixa um CSV desta janela (ordem de faturamento), para colar no chat e planejar" onclick="PetitIN.exportarAbc()">⬇ Exportar CSV</button></div>`;
+      <span class="td-muted" style="margin-left:auto;font-size:12px">dados de ${D.carregadoEm ? D.carregadoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+      <button class="btn btn-outline btn-sm" title="Busca de novo as vendas no banco (a curva é recalculada a cada busca)" onclick="PetitIN.atualizar()">🔄 Atualizar</button>
+      <button class="btn btn-outline btn-sm" title="Baixa um CSV desta janela (ordem de faturamento), para colar no chat e planejar" onclick="PetitIN.exportarAbc()">⬇ Exportar CSV</button></div>`;
     if (!lista.length) return h + '<div class="empty-state">Sem venda de produto de catálogo nessa janela ainda.</div>';
     const porFaturamento = lista.slice().sort((a, b) => a.posicao - b.posicao);   // Pareto sempre em ordem de faturamento, mesmo a tabela abaixo estando por prioridade de reposição
     h += `<div class="table-card" style="padding:16px;margin-bottom:12px"><b>Pareto — faturamento por produto</b><div class="td-muted" style="margin-bottom:8px">Barras em ordem decrescente de faturamento; a linha é o % acumulado, com marca em 80% e 95% (os mesmos cortes da classe).</div>
@@ -258,6 +260,7 @@
 
   window.PetitIN = {
     janela(j) { janelaAbc = j; desenhar(); },
+    async atualizar() { try { await recarregar('Dados atualizados.'); } catch (e) { aviso(e.message, false); } },
     exportarAbc() {   // CSV da janela na tela, em ordem de faturamento; vírgula e ponto decimal, como os outros CSVs do app
       const lista = D.abc.filter(r => r.janela === janelaAbc).sort((a, b) => a.posicao - b.posicao);
       if (!lista.length) return aviso('Não há dados nessa janela para exportar.', false);

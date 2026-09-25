@@ -10,6 +10,7 @@
   const brl = n => (n == null || n === '' || isNaN(n)) ? '—' : Number(n).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const pct = n => (n == null || isNaN(n)) ? '—' : (Number(n) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + '%';
   const d10 = s => String(s || '').slice(0, 10);
+  const hojeLocal = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
   const dataBR = d => d10(d).split('-').reverse().slice(0, 2).join('/');
   const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
   const mesTxt = m => { const [y, mm] = d10(m).split('-'); return MESES[Number(mm) - 1] + '/' + y; };
@@ -69,7 +70,7 @@
       const ref = $('conf-supabase') || $('dash-stats'); ref.parentNode.insertBefore(card, ref);
     }
     const pm = mes[0];
-    card.innerHTML = `<div style="font-weight:600">🎯 Meta de ${mesTxt(pm ? pm.mes : new Date().toISOString())}</div>`
+    card.innerHTML = `<div style="font-weight:600">🎯 Meta de ${mesTxt(pm ? pm.mes : hojeLocal())}</div>`
       + (pm ? barraMes(pm) + barraSemana(sem && sem[0]) : '<div class="td-muted" style="margin-top:6px">Sem meta para este mês — cadastre em Indicadores → 🎯 Metas.</div>');
   }
 
