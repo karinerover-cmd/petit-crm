@@ -3297,8 +3297,9 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
     const skus = skusComFormula(), hoje = (() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); })();
     if (!skus.length) return '<div class="empty-state">Nenhum produto tem fórmula ativa ainda. Cadastre a fórmula em 🧴 Fórmulas, ou use 🆕 Produto novo.</div>';
     return `<p class="td-muted">Lote de um produto que já existe. Para um produto que ainda não existe, use 🆕 Produto novo.</p><div class="table-card" style="padding:16px;margin-bottom:12px"><div class="grid2f">
-      <div class="field"><label>Produto</label><select id="lt-sku" onchange="PetitLT.calc()">${skus.map(s => `<option value="${esc(s)}">${esc(s)} — ${esc(nomeProd(s))}</option>`).join('')}</select></div>
-      <div class="field"><label>Data de fabricação</label><input type="date" id="lt-data" value="${hoje}"></div>
+      <div class="field"><label>Produto</label><select id="lt-sku" onchange="PetitLT.calc();PetitLT.sugerirNumero(true)">${skus.map(s => `<option value="${esc(s)}">${esc(s)} — ${esc(nomeProd(s))}</option>`).join('')}</select></div>
+      <div class="field"><label>Data de fabricação</label><input type="date" id="lt-data" value="${hoje}" onchange="PetitLT.sugerirNumero()"></div>
+      <div class="field"><label>Nº do lote <button class="btn-icon" style="padding:0 6px;font-size:11px" title="Sugerir de novo" onclick="PetitLT.sugerirNumero(true)">↻ sugerir</button></label><input id="lt-numero" placeholder="sugerido automaticamente" style="text-transform:uppercase" oninput="this.dataset.manual='1'"><div class="td-muted">padrão AAMM-SKU-NN, ex.: 2610-CEV002-01 · é o número que vai no rótulo</div></div>
       <div class="field"><label>Unidades produzidas</label><input id="lt-qtd" placeholder="ex.: 18" onchange="PetitLT.calc()"></div>
       <div class="field"><label>Horas trabalhadas (no lote todo)</label><input id="lt-horas" placeholder="ex.: 6" onchange="PetitLT.calc()"></div>
       <div class="field" style="grid-column:1/-1"><label>Observação</label><input id="lt-obs"></div></div>
@@ -3310,15 +3311,15 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
     const lista = soPendentes ? pendentes() : D.lotes;
     const filtro = `<div class="table-toolbar"><label class="toggle-label"><input type="checkbox" ${soPendentes ? 'checked' : ''} onchange="PetitLT.filtro(this.checked)"> mostrar só os que esperam aprovação (${pendentes().length})</label></div>`;
     if (!lista.length) return filtro + '<div class="empty-state">Nenhum lote esperando aprovação. 🎉</div>';
-    return filtro + `<div class="table-card"><table><thead><tr><th>Data</th><th>Produto</th><th>Unid.</th><th>Custo unit.</th><th>Sugerido</th><th>Preço atual</th><th>Situação</th><th></th></tr></thead><tbody>${lista.map(l => {
+    return filtro + `<div class="table-card"><table><thead><tr><th>Data</th><th>Lote</th><th>Produto</th><th>Unid.</th><th>Custo unit.</th><th>Sugerido</th><th>Preço atual</th><th>Situação</th><th></th></tr></thead><tbody>${lista.map(l => {
       const st = l.custo_incompleto && l.status_aprovacao === 'pendente' ? ['custo incompleto', 'badge-pink'] : (STATUS[l.status_aprovacao] || [l.status_aprovacao, '']), p = produto(l.sku), sug = l.preco_sugerido_varejo, pend = l.status_aprovacao === 'pendente';
       let acoes = '';
       if (pend) acoes = `<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">${sug != null ? `<button class="btn btn-primary btn-sm" onclick="PetitLT.aprovar('${l.id}')">Aprovar ${brl(sug)}</button>` : ''}
         <input id="lt-preco-${l.id}" style="width:90px" value="${sug != null ? arred90(sug).toFixed(2).replace('.', ',') : ''}" placeholder="preço"><button class="btn btn-outline btn-sm" onclick="PetitLT.ajustar('${l.id}')">Ajustar</button><button class="btn btn-outline btn-sm" onclick="PetitLT.descartar('${l.id}')">Descartar</button></div>`;
       const ver = `<button class="btn-icon" title="Ver detalhes" onclick="PetitLT.ver('${l.id}')">🔍</button> <button class="btn-icon" title="Excluir lote" onclick="PetitLT.excluir('${l.id}')">🗑</button>`;
-      let h = `<tr><td>${dataBR(l.data_fabricacao)}</td><td>${esc(l.sku)}<div class="td-muted">${esc(nomeProd(l.sku))}</div></td><td>${l.quantidade_produzida}<div class="td-muted">${num4(l.horas_trabalhadas)} h</div></td><td>${brl(l.custo_unitario)}</td>
+      let h = `<tr><td>${dataBR(l.data_fabricacao)}</td><td><b>${esc(l.numero_lote || '—')}</b></td><td>${esc(l.sku)}<div class="td-muted">${esc(nomeProd(l.sku))}</div></td><td>${l.quantidade_produzida}<div class="td-muted">${num4(l.horas_trabalhadas)} h</div></td><td>${brl(l.custo_unitario)}</td>
         <td>${sug == null ? '—' : brl(sug)}</td><td>${p ? brl(p.preco) : '—'}${l.preco_aprovado != null ? '<div class="td-muted">aplicado ' + brl(l.preco_aprovado) + '</div>' : ''}</td><td><span class="badge ${st[1]}">${st[0]}</span></td><td>${acoes}${acoes ? '<div style="margin-top:4px">' + ver + '</div>' : ver}</td></tr>`;
-      if (aberto === l.id) h += `<tr><td colspan="8" style="background:var(--surface2)">${resumo(Object.assign({}, l, { quantidade: l.quantidade_produzida, horas: l.horas_trabalhadas, formula_versao: l.formula_versao, preco_atual: p ? p.preco : null, detalhe: l.detalhe, itens_sem_custo: l.itens_sem_custo, custo_incompleto: l.custo_incompleto }))}${l.observacao ? '<div class="td-muted">Obs.: ' + esc(l.observacao) + '</div>' : ''}${blocoLotesUsados(l)}</td></tr>`;
+      if (aberto === l.id) h += `<tr><td colspan="9" style="background:var(--surface2)">${resumo(Object.assign({}, l, { quantidade: l.quantidade_produzida, horas: l.horas_trabalhadas, formula_versao: l.formula_versao, preco_atual: p ? p.preco : null, detalhe: l.detalhe, itens_sem_custo: l.itens_sem_custo, custo_incompleto: l.custo_incompleto }))}${l.observacao ? '<div class="td-muted">Obs.: ' + esc(l.observacao) + '</div>' : ''}${blocoLotesUsados(l)}</td></tr>`;
       return h;
     }).join('')}</tbody></table></div>`;
   }
@@ -3405,6 +3406,7 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
         <div class="field"><label>Horas trabalhadas (no lote todo)</label><input id="np-horas" value="${esc(NP.horas)}" placeholder="ex.: 3" onchange="PetitLT.np('horas',this.value)"></div>
         <div class="field"><label>Observação</label><input value="${esc(NP.obs)}" onchange="PetitLT.np('obs',this.value)"></div></div>
         <label class="toggle-label"><input id="np-estoque" type="checkbox" ${NP.estoque ? 'checked' : ''} onchange="PetitLT.np('estoque',this.checked)"> lançar as unidades produzidas no estoque (estoque inicial)</label>
+        <div class="td-muted">Nº do lote do 1º lote: <b>${NP.data && skuLimpo() ? NP.data.slice(2, 4) + NP.data.slice(5, 7) + '-' + skuLimpo() + '-01' : '—'}</b> (gerado automaticamente)</div>
         <div class="td-muted">Mão de obra: ${brl(D.cfg.valor_hora_mao_de_obra)}/h · markup de varejo: × ${num4(D.cfg.markup_varejo)}.</div></div>
       <div id="np-resultado"><div class="td-muted">Escolha a fórmula e preencha unidades e horas para ver o custo e o preço sugerido.</div></div>`;
   }
@@ -3430,8 +3432,13 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
       catch (e) { calc = null; r.innerHTML = '<div class="alert">' + esc(e.message) + '</div>'; }
     },
     async registrar() {
-      if (!calc) return; const p = { sku: $('lt-sku').value, quantidade: numero($('lt-qtd').value), horas: numero($('lt-horas').value), data_fabricacao: $('lt-data').value, observacao: $('lt-obs').value };
-      try { const r = await rpc('gestao_registrar_lote', { p }); await carregar(); aviso('Lote registrado.' + (r.custo_incompleto ? ' Custo incompleto: sem preço sugerido.' : ' Aprove ou ajuste o preço na aba Lotes.'), true); aba = 'lotes'; soPendentes = true; aberto = r.lote_id; desenhar(); } catch (e) { aviso(e.message, false); }
+      if (!calc) return; const p = { sku: $('lt-sku').value, quantidade: numero($('lt-qtd').value), horas: numero($('lt-horas').value), data_fabricacao: $('lt-data').value, observacao: $('lt-obs').value, numero_lote: $('lt-numero') ? $('lt-numero').value : '' };
+      try { const r = await rpc('gestao_registrar_lote', { p }); await carregar(); aviso('Lote' + (r.numero_lote ? ' ' + r.numero_lote : '') + ' registrado.' + (r.custo_incompleto ? ' Custo incompleto: sem preço sugerido.' : ' Aprove ou ajuste o preço na aba Lotes.'), true); aba = 'lotes'; soPendentes = true; aberto = r.lote_id; desenhar(); } catch (e) { aviso(e.message, false); }
+    },
+    async sugerirNumero(forcar) {
+      const inp = $('lt-numero'); if (!inp || (inp.dataset.manual === '1' && !forcar)) return;
+      try { const n = await rpc('gestao_sugerir_numero_lote', { p: { sku: $('lt-sku').value, data_fabricacao: $('lt-data').value } }); const i2 = $('lt-numero'); if (i2) { i2.value = n || ''; i2.dataset.manual = '0'; } }
+      catch (e) { /* Fase 17 ainda não rodada: o campo fica vazio */ }
     },
     filtro(v) { soPendentes = v; desenhar(); },
     ver(id) { aberto = aberto === id ? null : id; desenhar(); },
@@ -3517,6 +3524,7 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
     const n = pendentes().length, np = $('lt-npend'); if (np) np.textContent = n ? ' (' + n + ')' : '';
     raiz.innerHTML = aba === 'novo' ? tabNovo() : aba === 'produto' ? tabProdNovo() : aba === 'lotes' ? tabLotes() : aba === 'emb' ? tabEmb() : tabCfg();
     if (aba === 'produto') npSimular();
+    if (aba === 'novo') PetitLT.sugerirNumero(true);
   }
   function montar() {
     if ($('sec-lotes')) return;
