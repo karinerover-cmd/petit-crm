@@ -32,7 +32,7 @@ troca("onclick=\"excluirCliente(${c.id})\"", "onclick=\"excluirCliente('${c.id}'
 // 3b) Fase 16b: observação do item avulso (aroma escolhido, evento, etc.) aparece no histórico
 troca(
 "?v.itens.map(i=>`<div class=\"td-muted\">• ${i.nome} ×${i.qtd}${i.desconto>0?' (−R$'+parseFloat(i.desconto).toFixed(2)+')':''} = R$ ${parseFloat(i.subtotal).toFixed(2)}</div>`).join('')",
-"?v.itens.map(i=>`<div class=\"td-muted\">• ${i.nome} ×${i.qtd}${i.desconto>0?' (−R$'+parseFloat(i.desconto).toFixed(2)+')':''} = R$ ${parseFloat(i.subtotal).toFixed(2)}</div>${i.observacaoAvulsa?`<div class=\"td-muted\" style=\"font-style:italic\">${i.observacaoAvulsa}</div>`:''}`).join('')",
+"?v.itens.map(i=>`<div class=\"td-muted\">• ${i.nome} ×${i.qtd}${i.desconto>0?' (−R$'+parseFloat(i.desconto).toFixed(2)+')':''} = R$ ${parseFloat(i.subtotal).toFixed(2)}${i.lote?' · lote '+i.lote:''}</div>${i.observacaoAvulsa?`<div class=\"td-muted\" style=\"font-style:italic\">${i.observacaoAvulsa}</div>`:''}`).join('')",
 'histórico observação avulsa');
 // 3c) Fase 16: opção de venda avulsa (refil/encomenda/personalizado sem produto cadastrado) no formulário de venda
 troca(
@@ -100,6 +100,16 @@ troca(
         </div>
         <button class="btn btn-outline" style="width:100%;" onclick="adicionarAoCarrinhoG()">+ Adicionar ao carrinho</button>
       </div>`, 'venda avulsa (formulário)');
+
+// 3d) Fase 18: o carrinho mostra o lote escolhido do item (o seletor de lote nasce na camada_supabase.js)
+troca("Qtd: ${item.qtd} × R$ ${item.preco.toFixed(2)}${item.descontoLabel?' · Desc: '+item.descontoLabel:''}</div>",
+  "Qtd: ${item.qtd} × R$ ${item.preco.toFixed(2)}${item.descontoLabel?' · Desc: '+item.descontoLabel:''}${item.loteNumero?' · lote '+item.loteNumero:''}</div>", 'carrinho mostra lote');
+
+// 3e) Fase 19: aba Estoque ganha a coluna Lote (dados anexados em p.lotes pela camada_supabase.js)
+troca("<th>Fabricação</th><th>Vence em</th><th>Preço</th>",
+  "<th>Fabricação</th><th>Vence em</th><th>Lote</th><th>Preço</th>", 'estoque: cabeçalho lote');
+troca("        <td>${fmtMes(v)}</td>\n        <td>R$ ${p.preco.toFixed(2)}</td>",
+  "        <td>${fmtMes(v)}</td>\n        <td>${(p.lotes&&p.lotes.length)?p.lotes.map(l=>`<div style=\"white-space:nowrap\"><span class=\"chip\">${l.numero}</span> <span class=\"td-muted\">${l.saldo} un.</span></div>`).join(''):'<span class=\"td-muted\">—</span>'}</td>\n        <td>R$ ${p.preco.toFixed(2)}</td>", 'estoque: célula lote');
 
 const css = `<style>
 /* Fase 6+: o menu ganhou várias seções novas (Notas fiscais, Fórmulas, Lotes e preços, Margem de vendas) e passou a não caber

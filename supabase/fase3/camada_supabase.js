@@ -25,15 +25,28 @@
     return out;
   }
   async function buscar() {
-    return { produtos: await todas('produtos', '*', { col: 'sku' }), canais: await todas('canais', '*', { col: 'nome' }),
+    // Fase 19: lotes e o que já saiu de cada um (aba Estoque). Se falhar, o app segue sem a coluna de lotes.
+    let lotes = [], vendidos = [];
+    try { lotes = await todas('lotes_fabricacao', 'id,sku,numero_lote,data_fabricacao,quantidade_produzida', { col: 'data_fabricacao' });
+          vendidos = await (async () => { let o = []; for (let de = 0; ; de += 1000) { const { data, error } = await sb.from('venda_itens').select('lote_fabricacao_id,quantidade').not('lote_fabricacao_id', 'is', null).range(de, de + 999); if (error) throw error; o = o.concat(data || []); if (!data || data.length < 1000) break; } return o; })(); }
+    catch (e) { console.warn('lotes não carregados:', e.message || e); lotes = []; vendidos = []; }
+    return { lotes, vendidos, produtos: await todas('produtos', '*', { col: 'sku' }), canais: await todas('canais', '*', { col: 'nome' }),
       clientes: await todas('clientes', 'id,nome,telefone,email', { col: 'nome' }),
-      vendas: await todas('vendas', '*, canais(nome), clientes(nome,telefone,email), venda_itens(sku,produto_nome,quantidade,preco_unitario,desconto,desconto_label,subtotal,observacao_avulsa)', { col: 'data_venda', asc: false }) };
+      vendas: await (async () => {
+        const sel = 'canais(nome), clientes(nome,telefone,email), venda_itens(sku,produto_nome,quantidade,preco_unitario,desconto,desconto_label,subtotal,observacao_avulsa';
+        try { return await todas('vendas', '*, ' + sel + ',lotes_fabricacao(numero_lote))', { col: 'data_venda', asc: false }); }   // Fase 18
+        catch (e) { return await todas('vendas', '*, ' + sel + ')', { col: 'data_venda', asc: false }); }
+      })() };
   }
 
   function mapear(bruto) {
     const todos = bruto.produtos.map(p => ({
       id: p.sku, nome: p.nome, colecao: p.colecao || '', cat: p.categoria || 'Outro', fab: p.data_fabricacao || '',
       validMeses: p.validade_meses || 0, preco: num(p.preco), qtd: p.estoque_atual, oculto: !!p.oculto }));
+    // Fase 19: saldo estimado por lote = produzido − vendido com o lote marcado; só aparece se o produto ainda tem estoque
+    const sai = {}; (bruto.vendidos || []).forEach(v => { sai[v.lote_fabricacao_id] = (sai[v.lote_fabricacao_id] || 0) + v.quantidade; });
+    todos.forEach(p => { p.lotes = p.qtd > 0 ? (bruto.lotes || []).filter(l => l.sku === p.id)
+      .map(l => ({ numero: l.numero_lote, saldo: l.quantidade_produzida - (sai[l.id] || 0) })).filter(l => l.saldo > 0) : []; });
     const prod = todos.filter(p => !p.oculto);                 // produtos ocultos (esgotados/vencidos) não aparecem no app
     const porSku = Object.fromEntries(todos.map(p => [p.id, p]));
     const cli = bruto.clientes.map(c => ({ id: c.id, nome: c.nome, tel: c.telefone || '', email: c.email || '' }));
@@ -41,7 +54,8 @@
       const itens = (v.venda_itens || []).map(i => {
         const p = porSku[i.sku] || {};
         return { pid: i.sku || '', nome: i.produto_nome, colecao: p.colecao || '', cat: p.cat || '', preco: num(i.preco_unitario), qtd: i.quantidade,
-          desconto: num(i.desconto), descontoLabel: i.desconto_label || '', subtotal: num(i.subtotal), observacaoAvulsa: i.observacao_avulsa || '' };
+          desconto: num(i.desconto), descontoLabel: i.desconto_label || '', subtotal: num(i.subtotal), observacaoAvulsa: i.observacao_avulsa || '',
+          lote: (i.lotes_fabricacao && i.lotes_fabricacao.numero_lote) || '' };
       });
       const c = v.clientes || {};
       const base = { id: v.id, data: v.data_venda, total: num(v.valor), descontoTotal: num(v.desconto_venda), canal: (v.canais && v.canais.nome) || '',
@@ -228,6 +242,33 @@
       const descVal = tipoDesc === '%' ? base * (desc / 100) : desc;
       $('v-total').value = 'R$ ' + Math.max(0, base - descVal).toFixed(2);
     };
+    // Fase 18: lote de fabricação do item vendido (opcional). Já vem escolhido o lote mais antigo que ainda tem saldo;
+    // "Sem lote" serve para estoque antigo. O campo só aparece quando o produto tem lote com saldo.
+    let lotesSeqG = 0;
+    const dataBRG = d => d ? String(d).slice(0, 10).split('-').reverse().join('/') : '';
+    function campoLoteG() {
+      let c = $('v-lote-campo'); if (c) return c;
+      const ref = $('v-avulso-campos'); if (!ref) return null;
+      c = document.createElement('div'); c.id = 'v-lote-campo'; c.className = 'field'; c.style.display = 'none';
+      c.innerHTML = '<label>Lote <span style="font-weight:400;color:var(--muted)">(opcional)</span></label><select id="v-lote"></select>';
+      ref.parentNode.insertBefore(c, ref); return c;
+    }
+    window.atualizarLotesVendaG = async function () {
+      const c = campoLoteG(); if (!c) return;
+      const avulso = $('v-avulso-toggle') && $('v-avulso-toggle').checked, sku = $('v-produto') ? $('v-produto').value : '', seq = ++lotesSeqG, sel = $('v-lote');
+      if (avulso || !sku) { c.style.display = 'none'; sel.innerHTML = ''; return; }
+      let lotes = [];
+      try { lotes = (await rpc('gestao_lotes_disponiveis', { p: { sku } })) || []; } catch (e) { lotes = []; }   // Fase 18 ainda não rodada: sem seletor
+      if (seq !== lotesSeqG) return;   // chegou uma resposta mais nova
+      const noCarrinho = id => (typeof carrinhoG === 'undefined' ? [] : carrinhoG).filter(i => i.loteId === id).reduce((a, i) => a + i.qtd, 0);
+      lotes = lotes.map(l => Object.assign({}, l, { saldo: l.saldo - noCarrinho(l.id) })).filter(l => l.saldo > 0);
+      if (!lotes.length) { c.style.display = 'none'; sel.innerHTML = ''; return; }
+      sel.innerHTML = lotes.map(l => '<option value="' + l.id + '" data-saldo="' + l.saldo + '">' + l.numero_lote + ' · ' + l.saldo + ' un. restantes · fab. ' + dataBRG(l.data_fabricacao) + '</option>').join('')
+        + '<option value="" data-saldo="">Sem lote (estoque antigo)</option>';
+      sel.selectedIndex = 0;   // lote mais antigo com saldo
+      c.style.display = '';
+    };
+    document.addEventListener('change', e => { const id = e.target && e.target.id; if (id === 'v-produto' || id === 'v-avulso-toggle') window.atualizarLotesVendaG(); });
     window.adicionarAoCarrinhoG = function () {
       const avulso = $('v-avulso-toggle') && $('v-avulso-toggle').checked;
       const qtd = parseInt($('v-qtd').value) || 1;
@@ -255,12 +296,16 @@
         const p = produtos.find(x => String(x.id) === String(pid));
         if (!p) { mostrarErroAdd('Selecione um produto.'); return; }
         if (qtd > p.qtd) { mostrarErroAdd('Estoque insuficiente (' + p.qtd + ' un.).'); return; }
+        const loteSel = $('v-lote'), loteVisivel = $('v-lote-campo') && $('v-lote-campo').style.display !== 'none';
+        const loteId = (loteVisivel && loteSel && loteSel.value) || null, loteOpt = loteId ? loteSel.options[loteSel.selectedIndex] : null;
+        const loteNumero = loteOpt ? loteOpt.text.split(' · ')[0] : '', loteSaldo = loteOpt ? Number(loteOpt.dataset.saldo) : 0;
+        if (loteId && qtd > loteSaldo && !confirm('O lote ' + loteNumero + ' tem só ' + loteSaldo + ' un. restantes e você está vendendo ' + qtd + '. Marcar este lote mesmo assim?')) return;
         const base = p.preco * qtd;
         const descVal = tipoDesc === '%' ? base * (desc / 100) : desc;
         const descLabel = desc > 0 ? (tipoDesc === '%' ? desc + '%' : 'R$ ' + descVal.toFixed(2)) : '';
         const subtotal = Math.max(0, base - descVal);
-        carrinhoG.push({ pid: p.id, nome: p.nome, colecao: p.colecao, cat: p.cat, preco: p.preco, qtd, desconto: descVal, descontoLabel: descLabel, subtotal });
-        $('v-produto').value = '';
+        carrinhoG.push({ pid: p.id, nome: p.nome, colecao: p.colecao, cat: p.cat, preco: p.preco, qtd, desconto: descVal, descontoLabel: descLabel, subtotal, loteId, loteNumero });
+        $('v-produto').value = ''; window.atualizarLotesVendaG();
       }
       $('v-qtd').value = '1'; $('v-desc').value = '0'; $('v-total').value = '';
       renderCarrinhoG();
@@ -283,7 +328,7 @@
       const payload = { data, canal, obs, origem: 'gestao', desconto_venda: r2(cartDescVal),
         itens: carrinhoG.map(i => i.avulso
           ? { avulso: true, tipo_avulso: i.tipoAvulso, descricao_avulsa: i.descricaoAvulsa, observacao_avulsa: i.observacaoAvulsa, preco: i.preco, qtd: i.qtd, desconto: r2(i.desconto), label: i.descontoLabel, custo_unitario_manual: i.custoManual }
-          : { sku: i.pid, nome: i.nome, preco: i.preco, qtd: i.qtd, desconto: r2(i.desconto), label: i.descontoLabel }) };
+          : { sku: i.pid, nome: i.nome, preco: i.preco, qtd: i.qtd, desconto: r2(i.desconto), label: i.descontoLabel, lote_id: i.loteId || null }) };
       const sel = $('v-cli-sel').value;
       if (sel) payload.cliente_id = sel; else if (cliNome) payload.cliente = { nome: cliNome, tel: cliTel, email: cliEmail, salvar };
       const r = await agir(() => rpc('gestao_registrar_venda', { p: payload }));
@@ -294,7 +339,7 @@
       ['v-canal', 'v-obs', 'v-cli-nome', 'v-cli-tel', 'v-cli-email', 'v-cli-sel'].forEach(i => $(i).value = '');
       $('v-qtd').value = '1'; $('v-desc').value = '0'; $('v-total').value = ''; $('v-salvar-cli').checked = false;
       $('v-avulso-toggle').checked = false; $('v-avulso-obs').value = ''; toggleAvulsoG();
-      renderProdutosSel();
+      renderProdutosSel(); window.atualizarLotesVendaG();
       const a = $('alert-venda'); a.style.display = 'block'; setTimeout(() => a.style.display = 'none', 3000);
     };
     window.excluirVendaG = async function (id) {
