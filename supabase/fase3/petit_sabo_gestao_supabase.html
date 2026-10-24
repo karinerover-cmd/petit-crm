@@ -1959,7 +1959,12 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
     return out;
   }
   async function buscar() {
-    return { produtos: await todas('produtos', '*', { col: 'sku' }), canais: await todas('canais', '*', { col: 'nome' }),
+    // Fase 19: lotes e o que já saiu de cada um (aba Estoque). Se falhar, o app segue sem a coluna de lotes.
+    let lotes = [], vendidos = [];
+    try { lotes = await todas('lotes_fabricacao', 'id,sku,numero_lote,data_fabricacao,quantidade_produzida', { col: 'data_fabricacao' });
+          vendidos = await (async () => { let o = []; for (let de = 0; ; de += 1000) { const { data, error } = await sb.from('venda_itens').select('lote_fabricacao_id,quantidade').not('lote_fabricacao_id', 'is', null).range(de, de + 999); if (error) throw error; o = o.concat(data || []); if (!data || data.length < 1000) break; } return o; })(); }
+    catch (e) { console.warn('lotes não carregados:', e.message || e); lotes = []; vendidos = []; }
+    return { lotes, vendidos, produtos: await todas('produtos', '*', { col: 'sku' }), canais: await todas('canais', '*', { col: 'nome' }),
       clientes: await todas('clientes', 'id,nome,telefone,email', { col: 'nome' }),
       vendas: await (async () => {
         const sel = 'canais(nome), clientes(nome,telefone,email), venda_itens(sku,produto_nome,quantidade,preco_unitario,desconto,desconto_label,subtotal,observacao_avulsa';
@@ -1972,6 +1977,10 @@ if(_su && sheetsUrl) _su.value = sheetsUrl;
     const todos = bruto.produtos.map(p => ({
       id: p.sku, nome: p.nome, colecao: p.colecao || '', cat: p.categoria || 'Outro', fab: p.data_fabricacao || '',
       validMeses: p.validade_meses || 0, preco: num(p.preco), qtd: p.estoque_atual, oculto: !!p.oculto }));
+    // Fase 19: saldo estimado por lote = produzido − vendido com o lote marcado; só aparece se o produto ainda tem estoque
+    const sai = {}; (bruto.vendidos || []).forEach(v => { sai[v.lote_fabricacao_id] = (sai[v.lote_fabricacao_id] || 0) + v.quantidade; });
+    todos.forEach(p => { p.lotes = p.qtd > 0 ? (bruto.lotes || []).filter(l => l.sku === p.id)
+      .map(l => ({ numero: l.numero_lote, saldo: l.quantidade_produzida - (sai[l.id] || 0) })).filter(l => l.saldo > 0) : []; });
     const prod = todos.filter(p => !p.oculto);                 // produtos ocultos (esgotados/vencidos) não aparecem no app
     const porSku = Object.fromEntries(todos.map(p => [p.id, p]));
     const cli = bruto.clientes.map(c => ({ id: c.id, nome: c.nome, tel: c.telefone || '', email: c.email || '' }));
